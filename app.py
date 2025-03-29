@@ -10,11 +10,20 @@ import PyPDF2
 import io
 import google.generativeai as genai
 from dotenv import load_dotenv
+from flask_sock import Sock
+import json
+import threading
+from functools import wraps
 
 # Load environment variables
 load_dotenv()
 
 app = Flask(__name__)
+sock = Sock(app)
+
+# Store WebSocket connections
+ws_connections = set()
+ws_lock = threading.Lock()
 
 # Configure upload folder
 UPLOAD_FOLDER = 'uploads'
@@ -46,7 +55,7 @@ generation_config = {
     "temperature": 0.7,
     "top_p": 1,
     "top_k": 1,
-    "max_output_tokens": 1024,  # Reduced for Flash-Lite
+    "max_output_tokens": 1024,
     "candidate_count": 1
 }
 safety_settings = [
@@ -58,6 +67,153 @@ safety_settings = [
 model_gemini = genai.GenerativeModel(model_name="gemini-2.0-flash-lite",
                                    generation_config=generation_config,
                                    safety_settings=safety_settings)
+
+def broadcast_to_websockets(message):
+    """Broadcast a message to all connected WebSocket clients."""
+    with ws_lock:
+        dead_sockets = set()
+        for ws in ws_connections:
+            try:
+                ws.send(json.dumps(message))
+            except Exception:
+                dead_sockets.add(ws)
+        
+        # Remove dead connections
+        for dead_ws in dead_sockets:
+            ws_connections.remove(dead_ws)
+
+def require_api_key(f):
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        api_key = request.headers.get('X-API-Key')
+        if api_key != os.getenv('EXTERNAL_API_KEY'):
+            return jsonify({"error": "Invalid API key"}), 401
+        return f(*args, **kwargs)
+    return decorated_function
+
+@app.route('/api/external/query', methods=['POST'])
+@require_api_key
+def external_query():
+    """External API endpoint for queries."""
+    try:
+        data = request.json
+        if not data or 'query' not in data:
+            return jsonify({"error": "Query is required"}), 400
+        
+        # Process the query using the existing search function
+        result = process_search_query(data['query'])
+        
+        # Notify WebSocket clients about the API call
+        broadcast_to_websockets({
+            "type": "api_call",
+            "query": data['query'],
+            "query_result": result
+        })
+        
+        return jsonify(result)
+    
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@sock.route('/ws')
+def handle_websocket(ws):
+    """Handle WebSocket connections."""
+    with ws_lock:
+        ws_connections.add(ws)
+    try:
+        while True:
+            # Keep the connection alive
+            ws.receive()
+    except Exception:
+        with ws_lock:
+            ws_connections.remove(ws)
+
+def process_search_query(query):
+    """Process a search query and return the results."""
+    # Generate query embedding
+    query_embedding = model.encode(query).tolist()
+    
+    # Search in ChromaDB
+    results = collection.query(
+        query_embeddings=[query_embedding],
+        n_results=5,
+        include=['embeddings', 'documents']
+    )
+    
+    # Get all embeddings including the query for PCA
+    all_data = collection.get(include=['embeddings'])
+    if not all_data or 'embeddings' not in all_data or not all_data['embeddings']:
+        return {
+            "answer": "No documents found in the database.",
+            "query_embedding_visualization": {"x": 0, "y": 0, "z": 0}
+        }
+    
+    # Process embeddings and get visualization data
+    visualization_data = process_embeddings_for_visualization(
+        all_data['embeddings'],
+        query_embedding,
+        results
+    )
+    
+    # Generate answer using Gemini
+    answer = generate_answer(query, results)
+    
+    return {
+        "answer": answer,
+        "query_embedding_visualization": visualization_data["query_point"]
+    }
+
+def process_embeddings_for_visualization(embeddings, query_embedding, results):
+    """Process embeddings for visualization."""
+    all_embeddings = np.array(embeddings)
+    combined_embeddings = np.vstack([all_embeddings, query_embedding])
+    
+    # Apply PCA
+    n_samples = combined_embeddings.shape[0]
+    n_features = combined_embeddings.shape[1]
+    n_components = min(3, n_samples - 1, n_features)
+    
+    pca = PCA(n_components=n_components)
+    reduced_embeddings = pca.fit_transform(combined_embeddings)
+    
+    # Get query point and pad with zeros if needed
+    query_point = reduced_embeddings[-1]
+    query_coords = np.zeros(3)
+    for i in range(min(3, len(query_point))):
+        query_coords[i] = query_point[i]
+    
+    return {
+        "query_point": {
+            "x": float(query_coords[0]),
+            "y": float(query_coords[1]),
+            "z": float(query_coords[2])
+        }
+    }
+
+def generate_answer(query, results):
+    """Generate an answer using Gemini."""
+    if results.get('documents') and results['documents'][0]:
+        prompt = create_rag_prompt(query, results['documents'][0])
+        response = model_gemini.generate_content(prompt)
+        return response.text if response.text else "I couldn't generate a response based on the context."
+    return "I couldn't find any relevant information to answer your question."
+
+# Update the existing search endpoint to use the new processing functions
+@app.route('/api/search', methods=['POST'])
+def search():
+    try:
+        data = request.json
+        query = data.get('query')
+        
+        if not query:
+            return jsonify({"error": "No query provided"}), 400
+        
+        result = process_search_query(query)
+        return jsonify(result)
+        
+    except Exception as e:
+        print(f"Error in search: {str(e)}")
+        return jsonify({"error": str(e)}), 500
 
 def allowed_file(filename):
     return '.' in filename and \
@@ -167,80 +323,6 @@ def get_data():
     except Exception as e:
         print(f"Error in get_data: {str(e)}")
         return jsonify([]), 500
-
-@app.route('/api/search', methods=['POST'])
-def search():
-    try:
-        data = request.json
-        query = data.get('query')
-        
-        if not query:
-            return jsonify({"error": "No query provided"}), 400
-        
-        # Generate query embedding
-        query_embedding = model.encode(query).tolist()
-        
-        # Search in ChromaDB
-        results = collection.query(
-            query_embeddings=[query_embedding],
-            n_results=5,
-            include=['embeddings', 'documents']
-        )
-        
-        # Get all embeddings including the query for PCA
-        all_data = collection.get(include=['embeddings'])
-        if not all_data or 'embeddings' not in all_data or not all_data['embeddings']:
-            return jsonify({
-                "answer": "No documents found in the database.",
-                "query_embedding_visualization": {"x": 0, "y": 0, "z": 0}
-            })
-        
-        # Combine query embedding with all document embeddings
-        all_embeddings = np.array(all_data['embeddings'])
-        combined_embeddings = np.vstack([all_embeddings, query_embedding])
-        
-        # Apply PCA to all embeddings
-        n_samples = combined_embeddings.shape[0]
-        n_features = combined_embeddings.shape[1]
-        n_components = min(3, n_samples - 1, n_features)
-        
-        # Apply PCA and handle cases with fewer dimensions
-        pca = PCA(n_components=n_components)
-        reduced_embeddings = pca.fit_transform(combined_embeddings)
-        
-        # Get query point (last point after PCA) and pad with zeros if needed
-        query_point = reduced_embeddings[-1]
-        query_coords = np.zeros(3)  # Initialize with zeros
-        for i in range(min(3, len(query_point))):
-            query_coords[i] = query_point[i]
-        
-        # Format the query point for visualization
-        query_visualization = {
-            'x': float(query_coords[0]),
-            'y': float(query_coords[1]),
-            'z': float(query_coords[2])
-        }
-
-        # Create RAG prompt and get response from Gemini
-        if results.get('documents') and results['documents'][0]:
-            prompt = create_rag_prompt(query, results['documents'][0])
-            
-            # Call Gemini API
-            response = model_gemini.generate_content(prompt)
-            
-            # Extract the answer
-            answer = response.text if response.text else "I couldn't generate a response based on the context."
-        else:
-            answer = "I couldn't find any relevant information to answer your question."
-        
-        return jsonify({
-            "answer": answer,
-            "query_embedding_visualization": query_visualization
-        })
-        
-    except Exception as e:
-        print(f"Error in search: {str(e)}")
-        return jsonify({"error": str(e)}), 500
 
 @app.route('/api/embeddings-visualization')
 def get_embeddings_visualization():

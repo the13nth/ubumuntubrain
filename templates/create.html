@@ -165,6 +165,80 @@
             margin-top: 0;
             color: #333;
         }
+        .api-status {
+            margin-top: 10px;
+            padding: 8px 15px;
+            border-radius: 15px;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            background-color: #f8f9fa;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            width: 100%;
+        }
+        .api-status-header {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .api-call-details {
+            display: none;
+            padding: 8px;
+            background-color: #e9ecef;
+            border-radius: 8px;
+            font-size: 12px;
+        }
+        .api-call-query {
+            font-family: monospace;
+            word-break: break-all;
+        }
+        .send-query-btn {
+            margin-top: 5px;
+            padding: 4px 8px;
+            background-color: #28a745;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 11px;
+        }
+        .send-query-btn:hover {
+            background-color: #218838;
+        }
+        .status-indicator {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background-color: #28a745;
+            animation: pulse 2s infinite;
+        }
+        @keyframes pulse {
+            0% {
+                transform: scale(0.95);
+                box-shadow: 0 0 0 0 rgba(40, 167, 69, 0.7);
+            }
+            
+            70% {
+                transform: scale(1);
+                box-shadow: 0 0 0 6px rgba(40, 167, 69, 0);
+            }
+            
+            100% {
+                transform: scale(0.95);
+                box-shadow: 0 0 0 0 rgba(40, 167, 69, 0);
+            }
+        }
+        .api-status-text {
+            font-size: 12px;
+            color: #495057;
+        }
+        .api-endpoint {
+            font-family: monospace;
+            background-color: #e9ecef;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-size: 11px;
+        }
     </style>
 </head>
 <body>
@@ -188,12 +262,26 @@
 
             <div class="section search-section">
                 <h2>Search Documents</h2>
-                <form id="searchForm">
-                    <input type="text" id="searchQuery" placeholder="Enter your search query...">
-                    <button type="submit">Search</button>
-                </form>
-                <div class="loading" id="loadingIndicator">Generating answer</div>
-                <div class="answer-container" id="answerContainer" style="display: none;"></div>
+                <textarea id="searchInput" placeholder="Enter your search query"></textarea>
+                <button onclick="handleSearch()">Search</button>
+                <div class="api-status">
+                    <div class="api-status-header">
+                        <div class="status-indicator"></div>
+                        <div class="api-status-text">
+                            API Active at<span class="api-endpoint">/api/external/query</span>
+                        </div>
+                    </div>
+                    <div class="api-call-details">
+                        <div>API Called</div>
+                        <div>Query: <span class="api-call-query"></span></div>
+                        <button class="send-query-btn" onclick="sendReceivedQuery()">Send Query</button>
+                    </div>
+                </div>
+                <div id="loading" class="loading" style="display: none;">
+                    <div class="spinner"></div>
+                    <span>Generating answer...</span>
+                </div>
+                <div id="answer" class="answer-container"></div>
             </div>
         </div>
 
@@ -324,9 +412,8 @@
         }
 
         // Handle search
-        document.getElementById('searchForm').addEventListener('submit', async (e) => {
-            e.preventDefault();
-            const query = document.getElementById('searchQuery').value.trim();
+        async function handleSearch() {
+            const query = document.getElementById('searchInput').value.trim();
             
             if (!query) {
                 return;
@@ -334,8 +421,8 @@
 
             try {
                 // Show loading indicator
-                document.getElementById('loadingIndicator').style.display = 'block';
-                document.getElementById('answerContainer').style.display = 'none';
+                document.getElementById('loading').style.display = 'block';
+                document.getElementById('answer').style.display = 'none';
 
                 const response = await fetch('/api/search', {
                     method: 'POST',
@@ -348,10 +435,10 @@
                 const data = await response.json();
                 
                 // Hide loading indicator
-                document.getElementById('loadingIndicator').style.display = 'none';
+                document.getElementById('loading').style.display = 'none';
                 
                 // Display the answer
-                const answerContainer = document.getElementById('answerContainer');
+                const answerContainer = document.getElementById('answer');
                 answerContainer.textContent = data.answer;
                 answerContainer.style.display = 'block';
                 
@@ -363,12 +450,12 @@
             } catch (error) {
                 console.error('Error:', error);
                 // Hide loading indicator and show error
-                document.getElementById('loadingIndicator').style.display = 'none';
-                const answerContainer = document.getElementById('answerContainer');
+                document.getElementById('loading').style.display = 'none';
+                const answerContainer = document.getElementById('answer');
                 answerContainer.textContent = 'An error occurred while processing your query.';
                 answerContainer.style.display = 'block';
             }
-        });
+        }
 
         // Function to update the 3D visualization
         async function updateVisualization(searchPoint = null) {
@@ -464,6 +551,60 @@
 
         // Initial load
         loadChromaData();
+
+        // Add WebSocket connection to get real-time API call notifications
+        const ws = new WebSocket(`ws://${window.location.host}/ws`);
+
+        let lastReceivedQuery = '';
+
+        ws.onmessage = function(event) {
+            const data = JSON.parse(event.data);
+            if (data.type === 'api_call') {
+                // Flash the status indicator
+                const indicator = document.querySelector('.status-indicator');
+                indicator.style.backgroundColor = '#dc3545';  // Red
+                setTimeout(() => {
+                    indicator.style.backgroundColor = '#28a745';  // Green
+                }, 1000);
+                
+                // Show API call details
+                const apiCallDetails = document.querySelector('.api-call-details');
+                const apiCallQuery = document.querySelector('.api-call-query');
+                lastReceivedQuery = data.query;
+                apiCallQuery.textContent = lastReceivedQuery;
+                apiCallDetails.style.display = 'block';
+                
+                // Auto-hide after 10 seconds
+                setTimeout(() => {
+                    apiCallDetails.style.display = 'none';
+                }, 10000);
+                
+                // If there's a query result, update the visualization
+                if (data.query_result) {
+                    updateVisualization(data.query_result);
+                }
+            }
+        };
+
+        function sendReceivedQuery() {
+            if (lastReceivedQuery) {
+                document.getElementById('searchInput').value = lastReceivedQuery;
+                handleSearch();
+            }
+        }
+
+        ws.onerror = function(error) {
+            console.error('WebSocket error:', error);
+            const indicator = document.querySelector('.status-indicator');
+            indicator.style.backgroundColor = '#dc3545';  // Red
+        };
+
+        ws.onclose = function() {
+            const indicator = document.querySelector('.status-indicator');
+            indicator.style.backgroundColor = '#6c757d';  // Grey
+            const statusText = document.querySelector('.api-status-text');
+            statusText.textContent = 'API Connection Lost';
+        };
     </script>
 </body>
 </html> 

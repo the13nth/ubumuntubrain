@@ -1,0 +1,421 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Document Embeddings</title>
+    <script src="https://cdn.plot.ly/plotly-2.30.0.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .container {
+            display: grid;
+            grid-template-columns: 1fr 2fr;
+            gap: 20px;
+        }
+        .left-panel {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+        .right-panel {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+        .section {
+            padding: 20px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            background-color: white;
+        }
+        .upload-section {
+            padding: 40px;
+            border: 2px dashed #ddd;
+            border-radius: 4px;
+            text-align: center;
+            background-color: #f8f9fa;
+        }
+        .upload-section.dragover {
+            background-color: #e9ecef;
+            border-color: #007bff;
+        }
+        .file-input {
+            display: none;
+        }
+        .file-label {
+            display: block;
+            padding: 20px;
+            cursor: pointer;
+        }
+        .file-label:hover {
+            background-color: #e9ecef;
+        }
+        .progress-bar {
+            width: 100%;
+            height: 20px;
+            background-color: #f0f0f0;
+            border-radius: 10px;
+            overflow: hidden;
+            margin-top: 10px;
+            display: none;
+        }
+        .progress {
+            width: 0%;
+            height: 100%;
+            background-color: #007bff;
+            transition: width 0.3s ease;
+        }
+        .status-message {
+            margin-top: 10px;
+            color: #666;
+        }
+        .data-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+        }
+        .data-table th, .data-table td {
+            border: 1px solid #ddd;
+            padding: 8px;
+            text-align: left;
+        }
+        .data-table th {
+            background-color: #f8f9fa;
+        }
+        .search-section input[type="text"] {
+            width: 100%;
+            padding: 10px;
+            margin: 10px 0;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            box-sizing: border-box;
+        }
+        .search-section button {
+            width: 100%;
+            padding: 10px;
+            background-color: #007bff;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        .search-section button:hover {
+            background-color: #0056b3;
+        }
+        #embedding-plot {
+            width: 100%;
+            height: 600px;
+            min-height: 600px;
+            background-color: white;
+        }
+        .plot-info {
+            margin-top: 10px;
+            padding: 10px;
+            background-color: #f8f9fa;
+            border-radius: 4px;
+        }
+        #search-results {
+            margin-top: 10px;
+            padding: 10px;
+            background-color: #f8f9fa;
+            border-radius: 4px;
+        }
+        .result-item {
+            margin: 10px 0;
+            padding: 10px;
+            background-color: white;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        .section h2 {
+            margin-top: 0;
+            color: #333;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="left-panel">
+            <div class="section">
+                <h2>Document Upload</h2>
+                <div class="upload-section" id="dropZone">
+                    <input type="file" id="fileInput" class="file-input" accept=".txt,.pdf" multiple>
+                    <label for="fileInput" class="file-label">
+                        <h3>Upload Documents</h3>
+                        <p>Drag and drop files here or click to select</p>
+                        <p>Supported formats: .txt, .pdf</p>
+                    </label>
+                    <div class="progress-bar">
+                        <div class="progress"></div>
+                    </div>
+                    <div class="status-message"></div>
+                </div>
+            </div>
+
+            <div class="section search-section">
+                <h2>Search Documents</h2>
+                <form id="searchForm">
+                    <input type="text" id="searchQuery" placeholder="Enter your search query...">
+                    <button type="submit">Search</button>
+                </form>
+            </div>
+        </div>
+
+        <div class="right-panel">
+            <div class="section">
+                <h2>ChromaDB Data</h2>
+                <div id="chromaData">
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th>ID</th>
+                                <th>Text</th>
+                                <th>Embedding Size</th>
+                                <th>Source</th>
+                            </tr>
+                        </thead>
+                        <tbody id="dataTableBody">
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <div class="section">
+                <h2>Embeddings Visualization</h2>
+                <div id="embedding-plot"></div>
+                <div class="plot-info">
+                    <p>This 3D visualization shows the embeddings reduced to 3 dimensions using PCA. Each point represents a document.</p>
+                    <p>Variance explained: <span id="variance-info"></span></p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Load existing data when page loads
+        async function loadChromaData() {
+            try {
+                const response = await fetch('/api/data');
+                const data = await response.json();
+                updateDataTable(data);
+                updateVisualization();
+            } catch (error) {
+                console.error('Error loading data:', error);
+            }
+        }
+
+        function updateDataTable(data) {
+            const tbody = document.getElementById('dataTableBody');
+            tbody.innerHTML = data.map(item => `
+                <tr>
+                    <td>${item.id}</td>
+                    <td>${item.document}</td>
+                    <td>${item.embedding_size}</td>
+                    <td>${item.source || 'Manual Input'}</td>
+                </tr>
+            `).join('');
+        }
+
+        // Handle file upload
+        const dropZone = document.getElementById('dropZone');
+        const fileInput = document.getElementById('fileInput');
+        const progressBar = document.querySelector('.progress');
+        const progressBarContainer = document.querySelector('.progress-bar');
+        const statusMessage = document.querySelector('.status-message');
+
+        // Drag and drop handlers
+        dropZone.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            dropZone.classList.add('dragover');
+        });
+
+        dropZone.addEventListener('dragleave', () => {
+            dropZone.classList.remove('dragover');
+        });
+
+        dropZone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            dropZone.classList.remove('dragover');
+            const files = e.dataTransfer.files;
+            handleFiles(files);
+        });
+
+        fileInput.addEventListener('change', (e) => {
+            handleFiles(e.target.files);
+        });
+
+        async function handleFiles(files) {
+            const validFiles = Array.from(files).filter(file => 
+                file.type === 'text/plain' || file.type === 'application/pdf'
+            );
+
+            if (validFiles.length === 0) {
+                statusMessage.textContent = 'Please upload only .txt or .pdf files';
+                return;
+            }
+
+            progressBarContainer.style.display = 'block';
+            statusMessage.textContent = 'Processing files...';
+
+            for (let i = 0; i < validFiles.length; i++) {
+                const file = validFiles[i];
+                const formData = new FormData();
+                formData.append('file', file);
+
+                try {
+                    const response = await fetch('/api/upload', {
+                        method: 'POST',
+                        body: formData
+                    });
+
+                    const result = await response.json();
+                    if (result.success) {
+                        statusMessage.textContent = `Processed ${i + 1} of ${validFiles.length} files`;
+                    } else {
+                        statusMessage.textContent = `Error processing ${file.name}: ${result.error}`;
+                    }
+                } catch (error) {
+                    statusMessage.textContent = `Error uploading ${file.name}: ${error.message}`;
+                }
+
+                // Update progress bar
+                const progress = ((i + 1) / validFiles.length) * 100;
+                progressBar.style.width = `${progress}%`;
+            }
+
+            // Refresh the data table after all files are processed
+            loadChromaData();
+        }
+
+        // Handle search
+        document.getElementById('searchForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const query = document.getElementById('searchQuery').value.trim();
+            
+            if (!query) {
+                return;
+            }
+
+            try {
+                const response = await fetch('/api/search', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ query }),
+                });
+                
+                const data = await response.json();
+                
+                // Update visualization with search point if available
+                if (data.query_embedding_visualization) {
+                    updateVisualization(data.query_embedding_visualization);
+                }
+                
+            } catch (error) {
+                console.error('Error:', error);
+            }
+        });
+
+        // Function to update the 3D visualization
+        async function updateVisualization(searchPoint = null) {
+            try {
+                const response = await fetch('/api/embeddings-visualization');
+                const data = await response.json();
+                
+                if (data.error) {
+                    console.error('Error:', data.error);
+                    return;
+                }
+
+                const points = data.points;
+                
+                // Create trace for document points
+                const documentTrace = {
+                    type: 'scatter3d',
+                    mode: 'markers',
+                    x: points.map(p => p.x),
+                    y: points.map(p => p.y),
+                    z: points.map(p => p.z),
+                    text: points.map(p => `${p.text}<br>Source: ${p.source}`),
+                    hoverinfo: 'text',
+                    name: 'Documents',
+                    marker: {
+                        size: 5,
+                        color: points.map((_, i) => i),
+                        colorscale: 'Viridis',
+                        opacity: 0.8
+                    }
+                };
+
+                const traces = [documentTrace];
+
+                // Add search point if it exists
+                if (searchPoint) {
+                    const searchTrace = {
+                        type: 'scatter3d',
+                        mode: 'markers',
+                        x: [searchPoint.x],
+                        y: [searchPoint.y],
+                        z: [searchPoint.z],
+                        text: ['Search Query'],
+                        hoverinfo: 'text',
+                        name: 'Search Query',
+                        marker: {
+                            size: 8,
+                            color: 'red',
+                            symbol: 'diamond'
+                        }
+                    };
+                    traces.push(searchTrace);
+                }
+
+                const layout = {
+                    title: '3D Embedding Space',
+                    scene: {
+                        xaxis: { title: 'PC1' },
+                        yaxis: { title: 'PC2' },
+                        zaxis: { title: 'PC3' },
+                        camera: {
+                            eye: { x: 1.5, y: 1.5, z: 1.5 }
+                        }
+                    },
+                    margin: {
+                        l: 0,
+                        r: 0,
+                        b: 0,
+                        t: 30
+                    },
+                    autosize: true,
+                    showlegend: true,
+                    paper_bgcolor: 'white',
+                    plot_bgcolor: 'white'
+                };
+
+                const config = {
+                    responsive: true,
+                    displayModeBar: true
+                };
+
+                Plotly.newPlot('embedding-plot', traces, layout, config);
+
+                // Update variance explained info
+                const varianceInfo = document.getElementById('variance-info');
+                const variances = data.variance_explained.map(v => (v * 100).toFixed(1));
+                varianceInfo.textContent = `PC1: ${variances[0]}%, PC2: ${variances[1]}%, PC3: ${variances[2]}%`;
+
+            } catch (error) {
+                console.error('Error updating visualization:', error);
+            }
+        }
+
+        // Initial load
+        loadChromaData();
+    </script>
+</body>
+</html> 

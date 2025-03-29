@@ -87,6 +87,11 @@
         .data-table th {
             background-color: #f8f9fa;
         }
+        .search-section {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
         .search-section input[type="text"] {
             width: 100%;
             padding: 10px;
@@ -106,6 +111,30 @@
         }
         .search-section button:hover {
             background-color: #0056b3;
+        }
+        .answer-container {
+            padding: 15px;
+            background-color: #f8f9fa;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            margin-top: 10px;
+            white-space: pre-wrap;
+        }
+        .loading {
+            text-align: center;
+            padding: 20px;
+            display: none;
+        }
+        .loading:after {
+            content: "...";
+            animation: dots 1.5s steps(5, end) infinite;
+        }
+        @keyframes dots {
+            0%, 20% { content: "."; }
+            40% { content: ".."; }
+            60% { content: "..."; }
+            80% { content: "...."; }
+            100% { content: "....."; }
         }
         #embedding-plot {
             width: 100%;
@@ -163,6 +192,8 @@
                     <input type="text" id="searchQuery" placeholder="Enter your search query...">
                     <button type="submit">Search</button>
                 </form>
+                <div class="loading" id="loadingIndicator">Generating answer</div>
+                <div class="answer-container" id="answerContainer" style="display: none;"></div>
             </div>
         </div>
 
@@ -302,6 +333,10 @@
             }
 
             try {
+                // Show loading indicator
+                document.getElementById('loadingIndicator').style.display = 'block';
+                document.getElementById('answerContainer').style.display = 'none';
+
                 const response = await fetch('/api/search', {
                     method: 'POST',
                     headers: {
@@ -312,6 +347,14 @@
                 
                 const data = await response.json();
                 
+                // Hide loading indicator
+                document.getElementById('loadingIndicator').style.display = 'none';
+                
+                // Display the answer
+                const answerContainer = document.getElementById('answerContainer');
+                answerContainer.textContent = data.answer;
+                answerContainer.style.display = 'block';
+                
                 // Update visualization with search point if available
                 if (data.query_embedding_visualization) {
                     updateVisualization(data.query_embedding_visualization);
@@ -319,6 +362,11 @@
                 
             } catch (error) {
                 console.error('Error:', error);
+                // Hide loading indicator and show error
+                document.getElementById('loadingIndicator').style.display = 'none';
+                const answerContainer = document.getElementById('answerContainer');
+                answerContainer.textContent = 'An error occurred while processing your query.';
+                answerContainer.style.display = 'block';
             }
         });
 

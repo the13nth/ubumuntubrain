@@ -3,6 +3,7 @@
 A RAG (Retrieval-Augmented Generation) system that allows you to upload documents, generate embeddings, and perform semantic search with Gemini AI responses.
 
 ## Features
+
 - Document upload (PDF, TXT)
 - Semantic search using embeddings
 - RAG with Google's Gemini AI
@@ -10,22 +11,30 @@ A RAG (Retrieval-Augmented Generation) system that allows you to upload document
 - External API access
 
 ## Setup
+
 1. Clone the repository
 2. Create a virtual environment:
+
    ```bash
    python -m venv venv
    source venv/bin/activate  # On Windows: venv\Scripts\activate
    ```
+
 3. Install dependencies:
+
    ```bash
    pip install -r requirements.txt
    ```
+
 4. Create a `.env` file with your API keys:
+
    ```
    GOOGLE_API_KEY=your_gemini_api_key_here
    EXTERNAL_API_KEY=your_chosen_api_key_here
    ```
+
 5. Run the application:
+
    ```bash
    python app.py
    ```
@@ -33,6 +42,7 @@ A RAG (Retrieval-Augmented Generation) system that allows you to upload document
 ## External API Documentation
 
 ### Endpoint Details
+
 - **URL**: `http://localhost:5000/api/external/query`
 - **Method**: POST
 - **Authentication**: API Key (via X-API-Key header)
@@ -40,12 +50,14 @@ A RAG (Retrieval-Augmented Generation) system that allows you to upload document
 ### Request Format
 
 #### Headers
+
 ```
 Content-Type: application/json
 X-API-Key: your_external_api_key_here
 ```
 
 #### Body
+
 ```json
 {
     "query": "your search query here"
@@ -53,6 +65,7 @@ X-API-Key: your_external_api_key_here
 ```
 
 ### Response Format
+
 ```json
 {
     "answer": "Generated answer from Gemini AI",
@@ -67,6 +80,7 @@ X-API-Key: your_external_api_key_here
 ### Example Calls
 
 #### cURL
+
 ```bash
 curl -X POST http://localhost:5000/api/external/query \
   -H "Content-Type: application/json" \
@@ -75,6 +89,7 @@ curl -X POST http://localhost:5000/api/external/query \
 ```
 
 #### Python
+
 ```python
 import requests
 import json
@@ -94,6 +109,7 @@ print(result)
 ```
 
 #### JavaScript
+
 ```javascript
 const response = await fetch('http://localhost:5000/api/external/query', {
     method: 'POST',
@@ -112,6 +128,7 @@ console.log(result);
 ### Error Responses
 
 #### Invalid API Key (401)
+
 ```json
 {
     "error": "Invalid API key"
@@ -119,6 +136,7 @@ console.log(result);
 ```
 
 #### Missing Query (400)
+
 ```json
 {
     "error": "Query is required"
@@ -126,6 +144,7 @@ console.log(result);
 ```
 
 #### Server Error (500)
+
 ```json
 {
     "error": "Error message details"
@@ -133,6 +152,7 @@ console.log(result);
 ```
 
 ### Notes
+
 - The API key must match the one set in your `.env` file
 - The query should be a text string
 - The response includes both the AI-generated answer and 3D coordinates for visualization
@@ -140,6 +160,7 @@ console.log(result);
 - All API calls are logged in the web interface with the option to re-run queries
 
 ## UI Features
+
 - Real-time API call notifications
 - Visual indicator for API status
 - Query history display

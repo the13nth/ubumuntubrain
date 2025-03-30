@@ -750,6 +750,38 @@ def latest_firebase_query():
         print(f"Error fetching from Firebase: {str(e)}")
         return jsonify({"error": str(e)}), 500
 
+@app.route('/api/latest-health-context')
+def latest_health_context():
+    """API endpoint to fetch the latest health context from Firebase"""
+    try:
+        if db is None:
+            return jsonify({"error": "Firebase not initialized"}), 500
+            
+        # Get the latest health context from Firebase
+        health_ref = db.collection('health_context')
+        readings = health_ref.order_by('created_at', direction=firestore.Query.DESCENDING).limit(1).get()
+        
+        latest_reading = None
+        for doc in readings:
+            health_data = {
+                'bloodSugar': str(doc.get('bloodSugar')),  # ensure string
+                'created_at': doc.get('created_at'),  # already string
+                'exerciseMinutes': str(doc.get('exerciseMinutes')),  # ensure string
+                'mealType': doc.get('mealType'),  # already string
+                'medication': doc.get('medication'),  # already string
+                'notes': doc.get('notes'),  # already string
+                'timestamp': doc.get('timestamp'),  # firestore timestamp
+                'type': doc.get('type')  # already string
+            }
+            latest_reading = health_data
+            break
+            
+        return jsonify({"health_context": latest_reading})
+        
+    except Exception as e:
+        print(f"Error fetching health context: {str(e)}")
+        return jsonify({"error": f"Error fetching health context: {str(e)}"}), 500
+
 def generate_layout_response(doc_ref, dashboard_context, raw_response, parsed_json):
     """Helper function to generate formatted layout response and update Firebase"""
     try:
@@ -1108,6 +1140,203 @@ def save_response_to_firebase(query, raw_response, response_type, original_query
     
     except Exception as e:
         print(f"Error saving response to Firebase: {str(e)}")
+
+@app.route('/api/save-recommendations', methods=['POST'])
+def save_recommendations():
+    """Save AI-generated recommendations to Firebase"""
+    if db is None:
+        print("Firebase not initialized, cannot save recommendations")
+        return jsonify({"error": "Firebase not initialized"}), 500
+    
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({"error": "No data provided"}), 400
+            
+        # Create a new document in the health_ai_recommendation collection
+        recommendations_ref = db.collection('health_ai_recommendation')
+        
+        # Prepare the data to be saved
+        recommendation_data = {
+            'recommendations': data.get('recommendations', []),
+            'bloodSugar': data.get('bloodSugar'),
+            'exerciseMinutes': data.get('exerciseMinutes'),
+            'mealType': data.get('mealType'),
+            'medication': data.get('medication'),
+            'status': data.get('status'),
+            'query_id': data.get('query_id'),
+            'health_context_id': data.get('health_context_id'),
+            'timestamp': firestore.SERVER_TIMESTAMP,
+            'created_at': data.get('created_at') or firestore.SERVER_TIMESTAMP
+        }
+        
+        # Add the document to the collection
+        doc_ref = recommendations_ref.add(recommendation_data)
+        print(f"Successfully saved recommendations to health_ai_recommendation collection with ID: {doc_ref[1].id}")
+        
+        return jsonify({
+            "success": True,
+            "message": "Recommendations saved successfully",
+            "recommendation_id": doc_ref[1].id
+        })
+        
+    except Exception as e:
+        print(f"Error saving recommendations: {str(e)}")
+        return jsonify({"error": f"Error saving recommendations: {str(e)}"}), 500
+
+@app.route('/api/latest-work-context')
+def latest_work_context():
+    """API endpoint to fetch the latest work context from Firebase"""
+    try:
+        if db is None:
+            return jsonify({"error": "Firebase not initialized"}), 500
+            
+        # Get the latest work context from Firebase
+        work_ref = db.collection('work_context')
+        tasks = work_ref.order_by('created_at', direction=firestore.Query.DESCENDING).limit(1).get()
+        
+        latest_task = None
+        for doc in tasks:
+            work_data = {
+                'collaborators': doc.get('collaborators'),
+                'created_at': doc.get('created_at'),
+                'deadline': doc.get('deadline'),
+                'notes': doc.get('notes'),
+                'priority': doc.get('priority'),
+                'status': doc.get('status'),
+                'taskName': doc.get('taskName'),
+                'timestamp': doc.get('timestamp'),
+                'type': doc.get('type')
+            }
+            latest_task = work_data
+            break
+            
+        return jsonify({"work_context": latest_task})
+        
+    except Exception as e:
+        print(f"Error fetching work context: {str(e)}")
+        return jsonify({"error": f"Error fetching work context: {str(e)}"}), 500
+
+@app.route('/api/save-work-recommendations', methods=['POST'])
+def save_work_recommendations():
+    """Save AI-generated work recommendations to Firebase"""
+    if db is None:
+        print("Firebase not initialized, cannot save work recommendations")
+        return jsonify({"error": "Firebase not initialized"}), 500
+    
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({"error": "No data provided"}), 400
+            
+        # Create a new document in the work_ai_recommendation collection
+        recommendations_ref = db.collection('work_ai_recommendation')
+        
+        # Prepare the data to be saved
+        recommendation_data = {
+            'recommendations': data.get('recommendations', []),
+            'taskName': data.get('taskName'),
+            'status': data.get('status'),
+            'priority': data.get('priority'),
+            'collaborators': data.get('collaborators'),
+            'deadline': data.get('deadline'),
+            'notes': data.get('notes'),
+            'query_id': data.get('query_id'),
+            'work_context_id': data.get('work_context_id'),
+            'timestamp': firestore.SERVER_TIMESTAMP,
+            'created_at': data.get('created_at') or firestore.SERVER_TIMESTAMP
+        }
+        
+        # Add the document to the collection
+        doc_ref = recommendations_ref.add(recommendation_data)
+        print(f"Successfully saved work recommendations to work_ai_recommendation collection with ID: {doc_ref[1].id}")
+        
+        return jsonify({
+            "success": True,
+            "message": "Work recommendations saved successfully",
+            "recommendation_id": doc_ref[1].id
+        })
+        
+    except Exception as e:
+        print(f"Error saving work recommendations: {str(e)}")
+        return jsonify({"error": f"Error saving work recommendations: {str(e)}"}), 500
+
+@app.route('/api/latest-commute-context')
+def latest_commute_context():
+    """API endpoint to fetch the latest commute context from Firebase"""
+    try:
+        if db is None:
+            return jsonify({"error": "Firebase not initialized"}), 500
+            
+        # Get the latest commute context from Firebase
+        commute_ref = db.collection('commute_context')
+        commutes = commute_ref.order_by('created_at', direction=firestore.Query.DESCENDING).limit(1).get()
+        
+        latest_commute = None
+        for doc in commutes:
+            commute_data = {
+                'created_at': doc.get('created_at'),
+                'duration': doc.get('duration'),
+                'endLocation': doc.get('endLocation'),
+                'notes': doc.get('notes'),
+                'startLocation': doc.get('startLocation'),
+                'timestamp': doc.get('timestamp'),
+                'trafficCondition': doc.get('trafficCondition'),
+                'transportMode': doc.get('transportMode'),
+                'type': doc.get('type')
+            }
+            latest_commute = commute_data
+            break
+            
+        return jsonify({"commute_context": latest_commute})
+        
+    except Exception as e:
+        print(f"Error fetching commute context: {str(e)}")
+        return jsonify({"error": f"Error fetching commute context: {str(e)}"}), 500
+
+@app.route('/api/save-commute-recommendations', methods=['POST'])
+def save_commute_recommendations():
+    """Save AI-generated commute recommendations to Firebase"""
+    if db is None:
+        print("Firebase not initialized, cannot save commute recommendations")
+        return jsonify({"error": "Firebase not initialized"}), 500
+    
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({"error": "No data provided"}), 400
+            
+        # Create a new document in the commute_ai_recommendation collection
+        recommendations_ref = db.collection('commute_ai_recommendation')
+        
+        # Prepare the data to be saved
+        recommendation_data = {
+            'recommendations': data.get('recommendations', []),
+            'startLocation': data.get('startLocation'),
+            'endLocation': data.get('endLocation'),
+            'duration': data.get('duration'),
+            'trafficCondition': data.get('trafficCondition'),
+            'transportMode': data.get('transportMode'),
+            'notes': data.get('notes'),
+            'query_id': data.get('query_id'),
+            'commute_context_id': data.get('commute_context_id'),
+            'timestamp': firestore.SERVER_TIMESTAMP,
+            'created_at': data.get('created_at') or firestore.SERVER_TIMESTAMP
+        }
+        
+        # Add the document to the collection
+        doc_ref = recommendations_ref.add(recommendation_data)
+        print(f"Successfully saved commute recommendations to commute_ai_recommendation collection with ID: {doc_ref[1].id}")
+        
+        return jsonify({
+            "success": True,
+            "message": "Commute recommendations saved successfully",
+            "recommendation_id": doc_ref[1].id
+        })
+        
+    except Exception as e:
+        print(f"Error saving commute recommendations: {str(e)}")
+        return jsonify({"error": f"Error saving commute recommendations: {str(e)}"}), 500
 
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=5000) 

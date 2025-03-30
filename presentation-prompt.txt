@@ -1,0 +1,54 @@
+Create a modern presentation for RAUIG (Retrieval Augmented UI Generation):
+
+Title: "RAUIG: Retrieval Augmented UI Generation"
+Subtitle: "Intelligent Interface Adaptation through Context-Aware Generation"
+Include: Modern 3D visualization or AI graphic
+
+Content Structure (12 slides):
+
+1. Overview
+- Smart system combining document retrieval with UI generation
+- RAG-based context-aware responses
+- Real-time layout optimization
+- Health monitoring features
+
+2. Architecture
+- Backend: Flask, ChromaDB, Firebase, Gemini/OpenAI
+- Frontend: 3D visualization (Plotly), WebSocket updates
+- Document processing: PDF, TXT, JSON support
+- Embedding visualization with PCA reduction
+
+3. Core Features
+- Document Management:
+  * Upload and embedding generation
+  * Interactive 3D visualization
+  * Color-coded clustering
+- Query Processing:
+  * Firebase integration
+  * Real-time synchronization
+  * Context-aware generation
+
+4. Health Interface
+- Daily plan and task tracking
+- Medication management
+- Glucose monitoring
+- Activity recommendations
+
+5. Layout System
+- Dynamic grid adaptation
+- Context-aware arrangements
+- Responsive sizing
+- User preference learning
+
+6. Closing
+- Future developments
+- Contact information
+- Repository links
+
+Design:
+- Colors: Blue (#007bff), Green (#28a745), Purple (#805ad5)
+- Typography: Arial/Helvetica headers
+- Include: Screenshots, diagrams, demos
+- Animations: Smooth transitions, progressive reveals
+
+Note: Focus on visuals over text. Include real application examples and interactive elements where possible. 

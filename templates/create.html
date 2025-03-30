@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Document Embeddings</title>
+    <title>Retrieval Augmented UI Generation (RAUIG)</title>
     <script src="https://cdn.plot.ly/plotly-2.30.0.min.js"></script>
     <style>
         body {
@@ -11,6 +11,16 @@
             max-width: 1200px;
             margin: 0 auto;
             padding: 20px;
+        }
+        .page-title {
+            text-align: center;
+            color: #2c3e50;
+            margin-bottom: 30px;
+            font-size: 2.5em;
+            font-weight: bold;
+            padding: 20px;
+            border-bottom: 3px solid #3498db;
+            text-shadow: 1px 1px 2px rgba(0,0,0,0.1);
         }
         .container {
             display: grid;
@@ -88,29 +98,106 @@
             background-color: #f8f9fa;
         }
         .search-section {
-            display: flex;
-            flex-direction: column;
-            gap: 20px;
-        }
-        .search-section input[type="text"] {
-            width: 100%;
-            padding: 10px;
-            margin: 10px 0;
+            margin-top: 20px;
+            padding: 20px;
             border: 1px solid #ddd;
-            border-radius: 4px;
-            box-sizing: border-box;
+            border-radius: 8px;
+            background-color: #f8f9fa;
         }
-        .search-section button {
-            width: 100%;
-            padding: 10px;
-            background-color: #007bff;
+        .firebase-query-section {
+            margin-top: 20px;
+            padding: 20px;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            background-color: #f8f9fa;
+        }
+        .query-box {
+            background-color: #e7f5fe;
+            padding: 15px;
+            border-radius: 5px;
+            margin-bottom: 15px;
+            border-left: 4px solid #4285f4;
+        }
+        .query-info {
+            font-size: 0.9em;
+            color: #777;
+            margin-top: 10px;
+        }
+        .process-btn {
+            background-color: #4285f4;
             color: white;
             border: none;
-            border-radius: 4px;
+            padding: 10px 20px;
+            border-radius: 5px;
             cursor: pointer;
+            font-size: 16px;
         }
-        .search-section button:hover {
-            background-color: #0056b3;
+        .process-btn:hover {
+            background-color: #3367d6;
+        }
+        .refresh-btn {
+            background-color: #34a853;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 14px;
+            margin-left: 10px;
+        }
+        .no-query {
+            color: #777;
+            font-style: italic;
+            padding: 20px;
+            text-align: center;
+            border: 1px dashed #ccc;
+        }
+        .loading-query {
+            display: none;
+            margin-top: 15px;
+        }
+        .spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #3498db;
+            border-radius: 50%;
+            width: 20px;
+            height: 20px;
+            animation: spin 2s linear infinite;
+            display: inline-block;
+            margin-right: 10px;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        .result-container {
+            margin-top: 20px;
+            padding: 15px;
+            border-radius: 5px;
+            background-color: #f0f8ff;
+            border-left: 4px solid #34a853;
+            display: none;
+        }
+        .layout-result {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+        }
+        .layout-result pre {
+            background-color: #f5f5f5;
+            padding: 10px;
+            border-radius: 4px;
+            border: 1px solid #ddd;
+            overflow: auto;
+            max-height: 200px;
+            font-family: 'Courier New', Courier, monospace;
+        }
+        .layout-result ul {
+            padding-left: 20px;
+            color: #0d6efd;
+        }
+        .layout-result h4 {
+            margin-top: 15px;
+            margin-bottom: 5px;
+            color: #333;
         }
         .answer-container {
             padding: 15px;
@@ -148,23 +235,6 @@
             background-color: #f8f9fa;
             border-radius: 4px;
         }
-        #search-results {
-            margin-top: 10px;
-            padding: 10px;
-            background-color: #f8f9fa;
-            border-radius: 4px;
-        }
-        .result-item {
-            margin: 10px 0;
-            padding: 10px;
-            background-color: white;
-            border: 1px solid #ddd;
-            border-radius: 4px;
-        }
-        .section h2 {
-            margin-top: 0;
-            color: #333;
-        }
         .api-status {
             margin-top: 10px;
             padding: 8px 15px;
@@ -191,19 +261,6 @@
         .api-call-query {
             font-family: monospace;
             word-break: break-all;
-        }
-        .send-query-btn {
-            margin-top: 5px;
-            padding: 4px 8px;
-            background-color: #28a745;
-            color: white;
-            border: none;
-            border-radius: 4px;
-            cursor: pointer;
-            font-size: 11px;
-        }
-        .send-query-btn:hover {
-            background-color: #218838;
         }
         .status-indicator {
             width: 8px;
@@ -239,19 +296,307 @@
             border-radius: 4px;
             font-size: 11px;
         }
+        .health-info {
+            margin-top: 20px;
+            padding: 20px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            background-color: #f8f9fa;
+        }
+        .health-card {
+            background-color: white;
+            padding: 20px;
+            border-radius: 4px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .reading-status {
+            margin-bottom: 10px;
+            padding: 15px;
+            border-radius: 8px;
+            position: relative;
+        }
+        .reading-status.normal {
+            background-color: #d4edda;
+            border: 1px solid #c3e6cb;
+        }
+        .reading-status.slightly-elevated {
+            background-color: #fff3cd;
+            border: 1px solid #ffeeba;
+        }
+        .reading-status.elevated {
+            background-color: #f8d7da;
+            border: 1px solid #f5c6cb;
+        }
+        .reading-status.low {
+            background-color: #cce5ff;
+            border: 1px solid #b8daff;
+        }
+        .status-badge {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 0.85em;
+            font-weight: 500;
+        }
+        .reading-status.normal .status-badge {
+            background-color: #28a745;
+            color: white;
+        }
+        .reading-status.slightly-elevated .status-badge {
+            background-color: #ffc107;
+            color: #212529;
+        }
+        .reading-status.elevated .status-badge {
+            background-color: #dc3545;
+            color: white;
+        }
+        .reading-status.low .status-badge {
+            background-color: #007bff;
+            color: white;
+        }
+        .health-card h5 {
+            margin: 0 0 10px 0;
+            color: #2c3e50;
+            font-size: 1.1em;
+        }
+        .recommendations ul {
+            margin: 0;
+            padding-left: 20px;
+            color: #495057;
+        }
+        .recommendations li {
+            margin-bottom: 5px;
+        }
+        .medication-item {
+            background-color: #f8f9fa;
+            padding: 10px;
+            border-radius: 4px;
+            margin-bottom: 8px;
+        }
+        .med-name {
+            color: #2c3e50;
+            font-weight: 600;
+        }
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 15px;
+            background-color: #f8f9fa;
+            padding: 15px;
+            border-radius: 4px;
+        }
+        .stat-item {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            text-align: center;
+        }
+        .stat-label {
+            font-size: 0.85em;
+            color: #6c757d;
+            margin-bottom: 5px;
+        }
+        .stat-value {
+            font-size: 1.3em;
+            font-weight: 600;
+            color: #2c3e50;
+        }
+        .daily-stats {
+            margin-bottom: 10px;
+        }
+        .layout-optimization-result {
+            margin-top: 20px;
+            padding: 20px;
+            background-color: #f8f9fa;
+            border-radius: 8px;
+            border: 1px solid #dee2e6;
+        }
+
+        .health-info-section {
+            margin-top: 20px;
+            padding: 20px;
+            background-color: #fff;
+            border-radius: 8px;
+            border: 1px solid #e9ecef;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+        }
+
+        .health-info-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid #e9ecef;
+        }
+
+        .health-info-title {
+            font-size: 1.25rem;
+            color: #2c3e50;
+            margin: 0;
+        }
+
+        .health-info-timestamp {
+            font-size: 0.9rem;
+            color: #6c757d;
+        }
+
+        .health-info-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+
+        .health-card {
+            background-color: #fff;
+            padding: 15px;
+            border-radius: 8px;
+            border: 1px solid #e9ecef;
+        }
+
+        .reading-status {
+            margin-bottom: 15px;
+            padding: 15px;
+            border-radius: 8px;
+            position: relative;
+        }
+
+        .reading-value {
+            font-size: 2rem;
+            font-weight: 600;
+            color: #2c3e50;
+            margin-bottom: 5px;
+        }
+
+        .reading-time {
+            font-size: 0.85rem;
+            color: #6c757d;
+        }
+
+        .daily-plan {
+            background-color: #ffffff;
+            color: #2c3e50;
+            padding: 20px;
+            border-radius: 8px;
+            margin-top: 20px;
+            border: 1px solid #dee2e6;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+        }
+
+        .daily-plan-title {
+            font-size: 1.25rem;
+            margin: 0 0 20px 0;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding-bottom: 15px;
+            border-bottom: 2px solid #e9ecef;
+            color: #2c3e50;
+        }
+
+        .daily-plan-title .close-btn {
+            color: #6c757d;
+            background: none;
+            border: none;
+            font-size: 1.2rem;
+            cursor: pointer;
+            padding: 0;
+            opacity: 0.7;
+        }
+
+        .daily-plan-task {
+            display: flex;
+            align-items: center;
+            margin-bottom: 15px;
+            padding: 12px;
+            border-radius: 6px;
+            background-color: #f8f9fa;
+            border: 1px solid #e9ecef;
+            transition: background-color 0.2s ease;
+        }
+
+        .daily-plan-task:hover {
+            background-color: #e9ecef;
+        }
+
+        .task-checkbox {
+            width: 24px;
+            height: 24px;
+            border-radius: 50%;
+            margin-right: 15px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background-color: #28a745;
+            color: white;
+            font-size: 14px;
+            border: 2px solid #28a745;
+        }
+
+        .task-checkbox.incomplete {
+            background-color: transparent;
+            border: 2px solid #6c757d;
+        }
+
+        .task-time {
+            color: #6c757d;
+            margin-right: 15px;
+            font-size: 0.95rem;
+            width: 75px;
+            font-weight: 500;
+        }
+
+        .task-description {
+            color: #2c3e50;
+            flex-grow: 1;
+            font-size: 0.95rem;
+        }
+
+        .task-actions {
+            display: flex;
+            justify-content: flex-end;
+            margin-top: 20px;
+            padding-top: 15px;
+            border-top: 1px solid #e9ecef;
+        }
+
+        .action-btn {
+            background-color: #007bff;
+            color: white;
+            border: none;
+            padding: 8px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 0.95rem;
+            font-weight: 500;
+            transition: background-color 0.2s ease;
+        }
+
+        .action-btn:hover {
+            background-color: #0056b3;
+        }
+
+        .completed {
+            text-decoration: line-through;
+            color: #6c757d;
+        }
     </style>
 </head>
 <body>
+    <h1 class="page-title">Retrieval Augmented UI Generation (RAUIG)</h1>
     <div class="container">
         <div class="left-panel">
             <div class="section">
-                <h2>Document Upload</h2>
+                <h2>Context Upload</h2>
                 <div class="upload-section" id="dropZone">
-                    <input type="file" id="fileInput" class="file-input" accept=".txt,.pdf" multiple>
+                    <input type="file" id="fileInput" class="file-input" accept=".txt,.pdf,.json" multiple>
                     <label for="fileInput" class="file-label">
                         <h3>Upload Documents</h3>
                         <p>Drag and drop files here or click to select</p>
-                        <p>Supported formats: .txt, .pdf</p>
+                        <p>Supported formats: .txt, .pdf, .json</p>
                     </label>
                     <div class="progress-bar">
                         <div class="progress"></div>
@@ -260,28 +605,14 @@
                 </div>
             </div>
 
-            <div class="section search-section">
-                <h2>Search Documents</h2>
-                <textarea id="searchInput" placeholder="Enter your search query"></textarea>
-                <button onclick="handleSearch()">Search</button>
-                <div class="api-status">
-                    <div class="api-status-header">
-                        <div class="status-indicator"></div>
-                        <div class="api-status-text">
-                            API Active at<span class="api-endpoint">/api/external/query</span>
-                        </div>
-                    </div>
-                    <div class="api-call-details">
-                        <div>API Called</div>
-                        <div>Query: <span class="api-call-query"></span></div>
-                        <button class="send-query-btn" onclick="sendReceivedQuery()">Send Query</button>
+            <div class="section firebase-query-section">
+                <h2>Latest Query from Firebase</h2>
+                <div id="queryContainer">
+                    <div class="loading">
+                        <div class="spinner"></div>
+                        <span>Loading query from Firebase...</span>
                     </div>
                 </div>
-                <div id="loading" class="loading" style="display: none;">
-                    <div class="spinner"></div>
-                    <span>Generating answer...</span>
-                </div>
-                <div id="answer" class="answer-container"></div>
             </div>
         </div>
 
@@ -312,6 +643,61 @@
                     <p>Variance explained: <span id="variance-info"></span></p>
                 </div>
             </div>
+        </div>
+    </div>
+
+    <div class="section daily-plan" id="healthInfoSection" style="display: none;">
+        <div class="daily-plan-title">
+            <span>Daily Plan - Health: Diabetes</span>
+            <button class="close-btn" aria-label="Close">×</button>
+        </div>
+        
+        <div class="daily-plan-tasks">
+            <div class="daily-plan-task">
+                <div class="task-checkbox">✓</div>
+                <span class="task-time">8:00 AM</span>
+                <span class="task-description completed">Check blood sugar</span>
+            </div>
+            
+            <div class="daily-plan-task">
+                <div class="task-checkbox">✓</div>
+                <span class="task-time">8:30 AM</span>
+                <span class="task-description completed">Take morning medication</span>
+            </div>
+            
+            <div class="daily-plan-task">
+                <div class="task-checkbox incomplete"></div>
+                <span class="task-time">12:30 PM</span>
+                <span class="task-description">Pre-lunch blood sugar check</span>
+            </div>
+            
+            <div class="daily-plan-task">
+                <div class="task-checkbox incomplete"></div>
+                <span class="task-time">1:00 PM</span>
+                <span class="task-description">Lunch + medication</span>
+            </div>
+            
+            <div class="daily-plan-task">
+                <div class="task-checkbox incomplete"></div>
+                <span class="task-time">4:00 PM</span>
+                <span class="task-description">Afternoon walk (30 mins)</span>
+            </div>
+            
+            <div class="daily-plan-task">
+                <div class="task-checkbox incomplete"></div>
+                <span class="task-time">6:00 PM</span>
+                <span class="task-description">Evening blood sugar check</span>
+            </div>
+            
+            <div class="daily-plan-task">
+                <div class="task-checkbox incomplete"></div>
+                <span class="task-time">7:00 PM</span>
+                <span class="task-description">Dinner + medication</span>
+            </div>
+        </div>
+        
+        <div class="task-actions">
+            <button class="action-btn">Save Changes</button>
         </div>
     </div>
 
@@ -370,11 +756,14 @@
 
         async function handleFiles(files) {
             const validFiles = Array.from(files).filter(file => 
-                file.type === 'text/plain' || file.type === 'application/pdf'
+                file.type === 'text/plain' || 
+                file.type === 'application/pdf' ||
+                file.type === 'application/json' ||
+                file.name.endsWith('.json')
             );
 
             if (validFiles.length === 0) {
-                statusMessage.textContent = 'Please upload only .txt or .pdf files';
+                statusMessage.textContent = 'Please upload only .txt, .pdf, or .json files';
                 return;
             }
 
@@ -481,10 +870,20 @@
                     hoverinfo: 'text',
                     name: 'Documents',
                     marker: {
-                        size: 5,
+                        size: 6,
                         color: points.map((_, i) => i),
-                        colorscale: 'Viridis',
-                        opacity: 0.8
+                        colorscale: [
+                            [0, '#1f77b4'],    // Start color
+                            [0.33, '#2ca02c'], // Middle color 1
+                            [0.66, '#ff7f0e'], // Middle color 2
+                            [1, '#d62728']     // End color
+                        ],
+                        opacity: 0.8,
+                        symbol: 'circle',
+                        line: {
+                            color: '#fff',
+                            width: 0.5
+                        }
                     }
                 };
 
@@ -502,109 +901,395 @@
                         hoverinfo: 'text',
                         name: 'Search Query',
                         marker: {
-                            size: 8,
-                            color: 'red',
-                            symbol: 'diamond'
+                            size: 10,
+                            color: '#e31a1c',
+                            symbol: 'diamond',
+                            opacity: 1,
+                            line: {
+                                color: '#fff',
+                                width: 1
+                            }
                         }
                     };
                     traces.push(searchTrace);
                 }
 
                 const layout = {
-                    title: '3D Embedding Space',
-                    scene: {
-                        xaxis: { title: 'PC1' },
-                        yaxis: { title: 'PC2' },
-                        zaxis: { title: 'PC3' },
-                        camera: {
-                            eye: { x: 1.5, y: 1.5, z: 1.5 }
+                    title: {
+                        text: '3D Embedding Space',
+                        font: {
+                            family: 'Arial, sans-serif',
+                            size: 24,
+                            color: '#2c3e50'
                         }
+                    },
+                    scene: {
+                        xaxis: {
+                            title: 'PC1',
+                            backgroundcolor: '#f8f9fa',
+                            gridcolor: '#ddd',
+                            showbackground: true,
+                            zerolinecolor: '#999'
+                        },
+                        yaxis: {
+                            title: 'PC2',
+                            backgroundcolor: '#f8f9fa',
+                            gridcolor: '#ddd',
+                            showbackground: true,
+                            zerolinecolor: '#999'
+                        },
+                        zaxis: {
+                            title: 'PC3',
+                            backgroundcolor: '#f8f9fa',
+                            gridcolor: '#ddd',
+                            showbackground: true,
+                            zerolinecolor: '#999'
+                        },
+                        camera: {
+                            up: { x: 0, y: 0, z: 1 },
+                            center: { x: 0, y: 0, z: 0 },
+                            eye: { x: 1.5, y: 1.5, z: 1.5 }
+                        },
+                        aspectmode: 'cube'
                     },
                     margin: {
                         l: 0,
                         r: 0,
                         b: 0,
-                        t: 30
+                        t: 40
                     },
-                    autosize: true,
                     showlegend: true,
+                    legend: {
+                        x: 0.02,
+                        y: 0.98,
+                        bgcolor: 'rgba(255, 255, 255, 0.9)',
+                        bordercolor: '#ddd',
+                        borderwidth: 1
+                    },
                     paper_bgcolor: 'white',
                     plot_bgcolor: 'white'
                 };
 
                 const config = {
                     responsive: true,
-                    displayModeBar: true
+                    displayModeBar: true,
+                    displaylogo: false,
+                    modeBarButtonsToAdd: [
+                        {
+                            name: 'Reset Camera',
+                            icon: Plotly.Icons.home,
+                            click: function(gd) {
+                                Plotly.relayout(gd, {
+                                    'scene.camera': {
+                                        up: { x: 0, y: 0, z: 1 },
+                                        center: { x: 0, y: 0, z: 0 },
+                                        eye: { x: 1.5, y: 1.5, z: 1.5 }
+                                    }
+                                });
+                            }
+                        }
+                    ],
+                    modeBarButtonsToRemove: ['toImage', 'sendDataToCloud']
                 };
 
+                // Create the plot with the updated configuration
                 Plotly.newPlot('embedding-plot', traces, layout, config);
 
-                // Update variance explained info
+                // Add hover event listener for better interactivity
+                const plot = document.getElementById('embedding-plot');
+                plot.on('plotly_hover', function(data) {
+                    plot.style.cursor = 'pointer';
+                });
+                plot.on('plotly_unhover', function(data) {
+                    plot.style.cursor = 'default';
+                });
+
+                // Update variance explained info with better formatting
                 const varianceInfo = document.getElementById('variance-info');
                 const variances = data.variance_explained.map(v => (v * 100).toFixed(1));
-                varianceInfo.textContent = `PC1: ${variances[0]}%, PC2: ${variances[1]}%, PC3: ${variances[2]}%`;
+                const totalVariance = variances.reduce((a, b) => parseFloat(a) + parseFloat(b), 0).toFixed(1);
+                varianceInfo.innerHTML = `
+                    <strong>Principal Components:</strong><br>
+                    PC1: ${variances[0]}% | PC2: ${variances[1]}% | PC3: ${variances[2]}%<br>
+                    <strong>Total variance explained:</strong> ${totalVariance}%
+                `;
 
             } catch (error) {
                 console.error('Error updating visualization:', error);
             }
         }
 
-        // Initial load
-        loadChromaData();
+        // Function to fetch and display the latest query from Firebase
+        function fetchLatestQuery() {
+            // Show loading
+            document.getElementById('queryContainer').innerHTML = `
+                <div class="loading">
+                    <div class="spinner"></div>
+                    <span>Loading query from Firebase...</span>
+                </div>
+            `;
+            
+            // Fetch the latest query
+            fetch('/api/latest-firebase-query')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.query) {
+                        // Display the query and stringify dashboard context object if it exists
+                        const dashboardContext = data.query.dashboardContext ? 
+                            (typeof data.query.dashboardContext === 'object' ? 
+                                JSON.stringify(data.query.dashboardContext) : 
+                                data.query.dashboardContext) : 
+                            'None';
+                            
+                        document.getElementById('queryContainer').innerHTML = `
+                            <div class="query-box">
+                                <h3>Query:</h3>
+                                <p>${data.query.query}</p>
+                                
+                                <div class="query-info">
+                                    <p>Submitted: ${data.query.timestamp || 'Unknown'}</p>
+                                    <p>Source: ${data.query.source || 'Unknown'}</p>
+                                    <p>Status: ${data.query.processed ? 'Processed' : 'Not Processed'}</p>
+                                    <p>Dashboard: ${dashboardContext}</p>
+                                </div>
+                            </div>
+                            <button id="processButton" class="process-btn" data-query="${data.query.query}" data-id="${data.query.id}">Process Query</button>
+                            <button id="refreshButton" class="refresh-btn">Refresh</button>
+                            <div id="loadingQuery" class="loading-query">
+                                <div class="spinner"></div>
+                                <span>Processing query...</span>
+                            </div>
+                            <div id="resultContainer" class="result-container"></div>
+                        `;
+                        
+                        // Add event listeners
+                        document.getElementById('processButton').addEventListener('click', processFirebaseQuery);
+                        document.getElementById('refreshButton').addEventListener('click', fetchLatestQuery);
+                    } else {
+                        // No query found
+                        document.getElementById('queryContainer').innerHTML = `
+                            <div class="no-query">
+                                <p>No queries found in Firebase.</p>
+                            </div>
+                            <button id="refreshButton" class="refresh-btn">Refresh</button>
+                        `;
+                        
+                        // Add event listener for refresh button
+                        document.getElementById('refreshButton').addEventListener('click', fetchLatestQuery);
+                    }
+                })
+                .catch(error => {
+                    console.error('Error fetching latest query:', error);
+                    document.getElementById('queryContainer').innerHTML = `
+                        <div class="no-query">
+                            <p>Error loading query: ${error.message}</p>
+                        </div>
+                        <button id="refreshButton" class="refresh-btn">Retry</button>
+                    `;
+                    
+                    // Add event listener for refresh button
+                    document.getElementById('refreshButton').addEventListener('click', fetchLatestQuery);
+                });
+        }
 
-        // Add WebSocket connection to get real-time API call notifications
-        const ws = new WebSocket(`ws://${window.location.host}/ws`);
-
-        let lastReceivedQuery = '';
-
-        ws.onmessage = function(event) {
-            const data = JSON.parse(event.data);
-            if (data.type === 'api_call') {
-                // Flash the status indicator
-                const indicator = document.querySelector('.status-indicator');
-                indicator.style.backgroundColor = '#dc3545';  // Red
-                setTimeout(() => {
-                    indicator.style.backgroundColor = '#28a745';  // Green
-                }, 1000);
-                
-                // Show API call details
-                const apiCallDetails = document.querySelector('.api-call-details');
-                const apiCallQuery = document.querySelector('.api-call-query');
-                lastReceivedQuery = data.query;
-                apiCallQuery.textContent = lastReceivedQuery;
-                apiCallDetails.style.display = 'block';
-                
-                // Auto-hide after 10 seconds
-                setTimeout(() => {
-                    apiCallDetails.style.display = 'none';
-                }, 10000);
-                
-                // If there's a query result, update the visualization
-                if (data.query_result) {
-                    updateVisualization(data.query_result);
-                }
+        // Add these predefined health templates before the processFirebaseQuery function
+        const healthTemplates = [
+            {
+                lastReading: {
+                    glucoseLevel: 110,
+                    timestamp: new Date().toISOString(),
+                    status: "Normal"
+                },
+                dailyStats: {
+                    averageGlucose: 112,
+                    readings: 8,
+                    inRange: 7,
+                    high: 1,
+                    low: 0
+                },
+                medications: [
+                    {
+                        name: "Metformin",
+                        dosage: "500mg",
+                        frequency: "Twice daily",
+                        lastTaken: new Date(Date.now() - 4 * 3600000).toISOString() // 4 hours ago
+                    }
+                ],
+                recommendations: [
+                    "Schedule is on track",
+                    "Consider a short walk after next meal",
+                    "Next reading due in 2 hours"
+                ]
+            },
+            {
+                lastReading: {
+                    glucoseLevel: 142,
+                    timestamp: new Date().toISOString(),
+                    status: "Slightly Elevated"
+                },
+                dailyStats: {
+                    averageGlucose: 135,
+                    readings: 6,
+                    inRange: 4,
+                    high: 2,
+                    low: 0
+                },
+                medications: [
+                    {
+                        name: "Metformin",
+                        dosage: "1000mg",
+                        frequency: "Twice daily",
+                        lastTaken: new Date(Date.now() - 2 * 3600000).toISOString() // 2 hours ago
+                    },
+                    {
+                        name: "Glipizide",
+                        dosage: "5mg",
+                        frequency: "Once daily",
+                        lastTaken: new Date(Date.now() - 8 * 3600000).toISOString() // 8 hours ago
+                    }
+                ],
+                recommendations: [
+                    "Consider drinking water",
+                    "Light exercise recommended",
+                    "Review meal portions"
+                ]
+            },
+            {
+                lastReading: {
+                    glucoseLevel: 82,
+                    timestamp: new Date().toISOString(),
+                    status: "Low"
+                },
+                dailyStats: {
+                    averageGlucose: 95,
+                    readings: 7,
+                    inRange: 5,
+                    high: 0,
+                    low: 2
+                },
+                medications: [
+                    {
+                        name: "Metformin",
+                        dosage: "500mg",
+                        frequency: "Twice daily",
+                        lastTaken: new Date(Date.now() - 6 * 3600000).toISOString() // 6 hours ago
+                    },
+                    {
+                        name: "Insulin",
+                        dosage: "10 units",
+                        frequency: "As needed",
+                        lastTaken: new Date(Date.now() - 12 * 3600000).toISOString() // 12 hours ago
+                    }
+                ],
+                recommendations: [
+                    "Take 15g of fast-acting carbs",
+                    "Check glucose in 15 minutes",
+                    "Review insulin dosing schedule"
+                ]
             }
-        };
+        ];
 
-        function sendReceivedQuery() {
-            if (lastReceivedQuery) {
-                document.getElementById('searchInput').value = lastReceivedQuery;
-                handleSearch();
+        // Modify the processFirebaseQuery function to include random health templates
+        async function processFirebaseQuery(event) {
+            const button = event.target;
+            const query = button.getAttribute('data-query');
+            const queryId = button.getAttribute('data-id');
+            
+            // Show loading
+            document.getElementById('loadingQuery').style.display = 'block';
+            document.getElementById('resultContainer').style.display = 'none';
+            
+            // Disable the button
+            button.disabled = true;
+            
+            try {
+                // Create form data
+                const formData = new FormData();
+                formData.append('query', query);
+                formData.append('query_id', queryId);
+                
+                // Send request to process the query
+                const response = await fetch('/api/process-firebase-query', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                const data = await response.json();
+                
+                // Hide loading
+                document.getElementById('loadingQuery').style.display = 'none';
+                
+                // Enable the button
+                button.disabled = false;
+                
+                // Display the result
+                const resultContainer = document.getElementById('resultContainer');
+                
+                if (data.error) {
+                    resultContainer.innerHTML = `<div class="error">${data.error}</div>`;
+                } else {
+                    // Update layout optimization result if available
+                    if (data.result && data.response) {
+                        resultContainer.innerHTML = `
+                            <h3>Layout Optimization Result:</h3>
+                            <div class="layout-result">
+                                <h4>Final Configuration:</h4>
+                                <pre>${JSON.stringify(data.result.finalConfig, null, 2)}</pre>
+                                
+                                <h4>Changes Made:</h4>
+                                <ul>
+                                    ${data.result.changes.colsChanged ? '<li>Columns updated</li>' : ''}
+                                    ${data.result.changes.rowsChanged ? '<li>Rows updated</li>' : ''}
+                                    ${data.result.changes.rowHeightChanged ? '<li>Row height updated</li>' : ''}
+                                    ${data.result.changes.marginChanged ? '<li>Margins updated</li>' : ''}
+                                </ul>
+                                
+                                <h4>Raw Response:</h4>
+                                <pre>${data.response.raw}</pre>
+                            </div>
+                        `;
+                    } else {
+                        // Standard response
+                        resultContainer.innerHTML = `
+                            <h3>Answer:</h3>
+                            <p>${data.answer}</p>
+                        `;
+                    }
+                    resultContainer.style.display = 'block';
+                    
+                    // Show the daily plan
+                    document.getElementById('healthInfoSection').style.display = 'block';
+                    
+                    // Update visualization if available
+                    if (data.query_embedding_visualization) {
+                        updateVisualization(data.query_embedding_visualization);
+                    }
+                }
+            } catch (error) {
+                console.error('Error processing query:', error);
+                
+                // Hide loading
+                document.getElementById('loadingQuery').style.display = 'none';
+                
+                // Enable the button
+                button.disabled = false;
+                
+                // Display error
+                const resultContainer = document.getElementById('resultContainer');
+                resultContainer.innerHTML = `
+                    <h3>Error:</h3>
+                    <p>An error occurred while processing the query: ${error.message}</p>
+                `;
+                resultContainer.style.display = 'block';
             }
         }
 
-        ws.onerror = function(error) {
-            console.error('WebSocket error:', error);
-            const indicator = document.querySelector('.status-indicator');
-            indicator.style.backgroundColor = '#dc3545';  // Red
-        };
-
-        ws.onclose = function() {
-            const indicator = document.querySelector('.status-indicator');
-            indicator.style.backgroundColor = '#6c757d';  // Grey
-            const statusText = document.querySelector('.api-status-text');
-            statusText.textContent = 'API Connection Lost';
-        };
+        // Initial load
+        document.addEventListener('DOMContentLoaded', function() {
+            loadChromaData();
+            updateVisualization();
+            fetchLatestQuery();
+        });
     </script>
 </body>
 </html> 

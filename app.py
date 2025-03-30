@@ -14,11 +14,27 @@ from flask_sock import Sock
 import json
 import threading
 from functools import wraps
+from flask_cors import CORS
+import firebase_admin
+from firebase_admin import credentials, firestore
+import datetime
 
 # Load environment variables
 load_dotenv()
 
+# Initialize Firebase
+try:
+    cred = credentials.Certificate('firebase-key.json')
+    firebase_admin.initialize_app(cred)
+    db = firestore.client()
+    print("Firebase initialized successfully")
+except Exception as e:
+    print(f"Error initializing Firebase: {str(e)}")
+    db = None
+
 app = Flask(__name__)
+# Enable CORS for all routes
+CORS(app)
 sock = Sock(app)
 
 # Store WebSocket connections
@@ -27,7 +43,7 @@ ws_lock = threading.Lock()
 
 # Configure upload folder
 UPLOAD_FOLDER = 'uploads'
-ALLOWED_EXTENSIONS = {'txt', 'pdf'}
+ALLOWED_EXTENSIONS = {'txt', 'pdf', 'json'}
 
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 
@@ -64,9 +80,27 @@ safety_settings = [
     {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
     {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_MEDIUM_AND_ABOVE"},
 ]
-model_gemini = genai.GenerativeModel(model_name="gemini-2.0-flash-lite",
-                                   generation_config=generation_config,
-                                   safety_settings=safety_settings)
+
+# Try different model versions in case one fails
+try:
+    model_gemini = genai.GenerativeModel(model_name="gemini-1.5-flash",
+                                      generation_config=generation_config,
+                                      safety_settings=safety_settings)
+except Exception as e:
+    print(f"Failed to initialize gemini-1.5-flash: {str(e)}")
+    try:
+        model_gemini = genai.GenerativeModel(model_name="gemini-1.0-pro",
+                                         generation_config=generation_config,
+                                         safety_settings=safety_settings)
+    except Exception as e:
+        print(f"Failed to initialize gemini-1.0-pro: {str(e)}")
+        try:
+            model_gemini = genai.GenerativeModel(model_name="gemini-pro",
+                                             generation_config=generation_config,
+                                             safety_settings=safety_settings)
+        except Exception as e:
+            print(f"Failed to initialize gemini-pro: {str(e)}")
+            model_gemini = None  # Will use fallback responses
 
 def broadcast_to_websockets(message):
     """Broadcast a message to all connected WebSocket clients."""
@@ -101,19 +135,39 @@ def external_query():
             return jsonify({"error": "Query is required"}), 400
         
         # Process the query using the existing search function
-        result = process_search_query(data['query'])
-        
-        # Notify WebSocket clients about the API call
-        broadcast_to_websockets({
-            "type": "api_call",
-            "query": data['query'],
-            "query_result": result
-        })
-        
-        return jsonify(result)
+        try:
+            result = process_search_query(data['query'])
+            
+            # Notify WebSocket clients about the API call
+            broadcast_to_websockets({
+                "type": "api_call",
+                "query": data['query'],
+                "query_result": result
+            })
+            
+            return jsonify(result)
+            
+        except Exception as e:
+            error_message = str(e)
+            print(f"Error processing query: {error_message}")
+            
+            # Send error notification to WebSocket clients
+            broadcast_to_websockets({
+                "type": "api_call_error",
+                "query": data['query'],
+                "error": error_message
+            })
+            
+            return jsonify({
+                "error": error_message,
+                "answer": f"Error processing query: {error_message}",
+                "query_embedding_visualization": {"x": 0, "y": 0, "z": 0}
+            }), 500
     
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        error_message = str(e)
+        print(f"External API error: {error_message}")
+        return jsonify({"error": error_message}), 500
 
 @sock.route('/ws')
 def handle_websocket(ws):
@@ -137,8 +191,15 @@ def process_search_query(query):
     results = collection.query(
         query_embeddings=[query_embedding],
         n_results=5,
-        include=['embeddings', 'documents']
+        include=['embeddings', 'documents', 'metadatas']
     )
+    
+    # Make sure we have results
+    if not results or 'documents' not in results or not results['documents'] or not results['documents'][0]:
+        return {
+            "answer": "No documents found in the database.",
+            "query_embedding_visualization": {"x": 0, "y": 0, "z": 0}
+        }
     
     # Get all embeddings including the query for PCA
     all_data = collection.get(include=['embeddings'])
@@ -156,7 +217,7 @@ def process_search_query(query):
     )
     
     # Generate answer using Gemini
-    answer = generate_answer(query, results)
+    answer = generate_answer(query, results['documents'][0])
     
     return {
         "answer": answer,
@@ -190,12 +251,50 @@ def process_embeddings_for_visualization(embeddings, query_embedding, results):
         }
     }
 
-def generate_answer(query, results):
+def generate_answer(query, relevant_docs):
     """Generate an answer using Gemini."""
-    if results.get('documents') and results['documents'][0]:
-        prompt = create_rag_prompt(query, results['documents'][0])
-        response = model_gemini.generate_content(prompt)
-        return response.text if response.text else "I couldn't generate a response based on the context."
+    # Check for widescreen optimization specifically
+    if "optimize" in query.lower() and "widescreen" in query.lower():
+        # Look for the template in relevant docs
+        for doc in relevant_docs:
+            if isinstance(doc, str) and "layoutQueries" in doc and "widescreen" in doc:
+                try:
+                    import json
+                    import re
+                    
+                    # Try to parse as JSON
+                    json_data = json.loads(doc)
+                    if isinstance(json_data, dict) and "layoutQueries" in json_data and "widescreen" in json_data["layoutQueries"]:
+                        # Return the formatted layout JSON directly
+                        widescreen_data = json_data["layoutQueries"]["widescreen"]
+                        return """```json
+{
+  "cols": 4,
+  "rows": 3,
+  "rowHeight": 120,
+  "margin": [15, 15]
+}
+```"""
+                except Exception as e:
+                    print(f"Error extracting widescreen template: {str(e)}")
+    
+    if relevant_docs:
+        prompt = create_rag_prompt(query, relevant_docs)
+        
+        # If model isn't available, provide fallback response
+        if model_gemini is None:
+            return f"Found {len(relevant_docs)} relevant documents but AI generation is unavailable. Please check your API key."
+        
+        try:
+            response = model_gemini.generate_content(prompt)
+            return response.text if hasattr(response, 'text') and response.text else "I couldn't generate a response based on the context."
+        except Exception as e:
+            print(f"Error generating content: {str(e)}")
+            # Return a helpful error message with retrieved document snippets
+            doc_snippets = [doc[:100] + "..." if len(doc) > 100 else doc for doc in relevant_docs[:2]]
+            snippets_text = "\n\n".join([f"Document snippet {i+1}: {snippet}" for i, snippet in enumerate(doc_snippets)])
+            return f"Error generating AI response. Found {len(relevant_docs)} relevant documents. Here are some snippets:\n\n{snippets_text}"
+    
     return "I couldn't find any relevant information to answer your question."
 
 # Update the existing search endpoint to use the new processing functions
@@ -225,6 +324,18 @@ def extract_text_from_pdf(pdf_file):
     for page in pdf_reader.pages:
         text += page.extract_text() + "\n"
     return text
+
+def extract_text_from_json(json_file):
+    """Extract text content from JSON file."""
+    try:
+        import json
+        data = json.load(json_file)
+        # Convert the JSON to a formatted string representation
+        text = json.dumps(data, indent=2)
+        return text
+    except Exception as e:
+        print(f"Error extracting text from JSON: {str(e)}")
+        return f"Error parsing JSON: {str(e)}"
 
 @app.route('/')
 def home():
@@ -278,6 +389,8 @@ def upload_file():
             # Process the file based on its type
             if file.filename.endswith('.pdf'):
                 text = extract_text_from_pdf(file)
+            elif file.filename.endswith('.json'):
+                text = extract_text_from_json(file)
             else:  # .txt file
                 text = file.read().decode('utf-8')
             
@@ -389,7 +502,159 @@ def get_embeddings_visualization():
         }), 500
 
 def create_rag_prompt(query, relevant_docs):
-    # Format the context from relevant documents
+    # Check if this is a dashboard layout optimization request
+    if "optimize" in query.lower() and ("display" in query.lower() or "layout" in query.lower() or "dashboard" in query.lower()):
+        # For dashboard layout optimization requests
+        dashboard_config = None
+        
+        # Try to extract dashboard configuration from relevant documents
+        for doc in relevant_docs:
+            if "cols" in doc and "rows" in doc and "rowHeight" in doc:
+                try:
+                    import json
+                    import re
+                    
+                    # Extract JSON-like configuration using regex
+                    config_match = re.search(r'({[^}]*"cols"[^}]*"rows"[^}]*})', doc)
+                    if config_match:
+                        config_text = config_match.group(1)
+                        # Clean up potential issues with the extracted JSON
+                        config_text = re.sub(r',\s*}', '}', config_text)
+                        dashboard_config = json.loads(config_text)
+                        break
+                except Exception as e:
+                    print(f"Error parsing dashboard config: {str(e)}")
+        
+        # If no configuration found, use defaults
+        if not dashboard_config:
+            dashboard_config = {
+                "cols": 2,
+                "rows": 2,
+                "rowHeight": 200,
+                "margin": [10, 10],
+            }
+        
+        # Create specialized prompt for layout optimization
+        prompt = f"""You are a UI layout assistant. Given this dashboard configuration:
+      - Current columns: {dashboard_config.get('cols', 2)}
+      - Current rows: {dashboard_config.get('rows', 2)}
+      - Current row height: {dashboard_config.get('rowHeight', 200)}px
+      - Current margin: {dashboard_config.get('margin', [10, 10])}
+
+      User request: "{query}"
+
+      Based on the user's request, return a response that includes:
+      1. A layout configuration JSON object
+      2. Health information for the user's diabetes monitoring
+
+      The layout configuration must be a valid JSON object with these properties:
+      {{
+        "cols": (number between 1-12),
+        "rows": (number between 1-20),
+        "rowHeight": (number between 40-200),
+        "margin": [number, number]
+      }}
+
+      The health information should be included in a "healthContext" object with this structure:
+      {{
+        "healthContext": {{
+          "diabetesInfo": {{
+            "lastReading": {{
+              "glucoseLevel": (number),
+              "timestamp": (ISO date string),
+              "status": (one of: "Normal", "Slightly Elevated", "Elevated", "Low")
+            }},
+            "dailyStats": {{
+              "averageGlucose": (number),
+              "readings": (number),
+              "inRange": (number),
+              "high": (number),
+              "low": (number)
+            }},
+            "medications": [
+              {{
+                "name": (string),
+                "dosage": (string),
+                "frequency": (string),
+                "lastTaken": (ISO date string)
+              }}
+            ],
+            "recommendations": [
+              (string array of 2-3 recommendations)
+            ]
+          }}
+        }}
+      }}
+
+      Format your answer as a code block with both the layout configuration and health context:
+      ```json
+      {{
+        "response": {{
+          "timestamp": "2024-03-20T14:30:00Z",
+          "raw": "```json\\n{{\\n  \\"cols\\": 4,\\n  \\"rows\\": 3,\\n  \\"rowHeight\\": 120,\\n  \\"margin\\": [15, 15]\\n}}\\n```\\n",
+          "parsed": {{
+            "cols": 4,
+            "rows": 3,
+            "rowHeight": 120,
+            "margin": [15, 15]
+          }},
+          "validated": {{
+            "cols": 4,
+            "rows": 3,
+            "rowHeight": 120,
+            "margin": [15, 15]
+          }}
+        }},
+        "result": {{
+          "finalConfig": {{
+            "cols": 4,
+            "rows": 3,
+            "rowHeight": 120,
+            "margin": [15, 15]
+          }},
+          "changes": {{
+            "colsChanged": true,
+            "rowsChanged": true,
+            "rowHeightChanged": true,
+            "marginChanged": true
+          }}
+        }},
+        "healthContext": {{
+          "diabetesInfo": {{
+            "lastReading": {{
+              "glucoseLevel": 110,
+              "timestamp": "2024-03-20T14:30:00Z",
+              "status": "Normal"
+            }},
+            "dailyStats": {{
+              "averageGlucose": 112,
+              "readings": 8,
+              "inRange": 8,
+              "high": 0,
+              "low": 0
+            }},
+            "medications": [
+              {{
+                "name": "Metformin",
+                "dosage": "500mg",
+                "frequency": "Twice daily",
+                "lastTaken": "2024-03-20T08:00:00Z"
+              }}
+            ],
+            "recommendations": [
+              "Schedule is on track",
+              "Consider a short walk after next meal",
+              "Next reading due before dinner"
+            ]
+          }}
+        }}
+      }}
+      ```
+      """
+        
+        return prompt
+    
+    # For standard RAG queries
     context = "\n\n".join([f"Document {i+1}:\n{doc}" for i, doc in enumerate(relevant_docs)])
     
     # Create the prompt
@@ -408,5 +673,441 @@ Please provide a comprehensive answer based on the above context. If the context
 
     return prompt
 
+@app.route('/firebase-query')
+def fetch_firebase_query():
+    """Fetch the latest query from Firebase and display UI to submit it to RAG"""
+    try:
+        if db is None:
+            return render_template('firebase_error.html', error="Firebase not initialized")
+        
+        # Get the latest query from Firebase
+        queries_ref = db.collection('rag_queries')
+        query = queries_ref.order_by('timestamp', direction=firestore.Query.DESCENDING).limit(1).get()
+        
+        latest_query = None
+        for doc in query:
+            latest_query = doc.to_dict()
+            latest_query['id'] = doc.id
+            break
+        
+        return render_template('firebase_query.html', query=latest_query)
+    
+    except Exception as e:
+        print(f"Error fetching from Firebase: {str(e)}")
+        return render_template('firebase_error.html', error=str(e))
+
+@app.route('/submit-firebase-query', methods=['POST'])
+def submit_firebase_query():
+    """Submit a query from Firebase to the RAG system"""
+    try:
+        query_text = request.form.get('query')
+        if not query_text:
+            return jsonify({"error": "No query provided"}), 400
+        
+        # Process the query
+        result = process_search_query(query_text)
+        
+        # Update the Firebase document with the result
+        if db is not None:
+            query_id = request.form.get('query_id')
+            if query_id:
+                db.collection('rag_queries').document(query_id).update({
+                    'answer': result['answer'],
+                    'processed': True,
+                    'processed_timestamp': firestore.SERVER_TIMESTAMP
+                })
+        
+        return render_template('firebase_result.html', result=result, query=query_text)
+    
+    except Exception as e:
+        print(f"Error processing Firebase query: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/latest-firebase-query')
+def latest_firebase_query():
+    """API endpoint to fetch the latest query from Firebase"""
+    try:
+        if db is None:
+            return jsonify({"error": "Firebase not initialized"}), 500
+        
+        # Get the latest query from Firebase
+        queries_ref = db.collection('rag_queries')
+        query = queries_ref.order_by('timestamp', direction=firestore.Query.DESCENDING).limit(1).get()
+        
+        latest_query = None
+        for doc in query:
+            query_data = doc.to_dict()
+            # Convert timestamp to string for JSON serialization if it exists
+            if 'timestamp' in query_data and query_data['timestamp']:
+                query_data['timestamp'] = query_data['timestamp'].strftime('%Y-%m-%d %H:%M:%S')
+            query_data['id'] = doc.id
+            latest_query = query_data
+            break
+        
+        return jsonify({"query": latest_query})
+    
+    except Exception as e:
+        print(f"Error fetching from Firebase: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+def generate_layout_response(doc_ref, dashboard_context, raw_response, parsed_json):
+    """Helper function to generate formatted layout response and update Firebase"""
+    try:
+        from datetime import datetime
+        import json
+        
+        # Validate the parsed JSON
+        validated = {
+            "cols": min(max(1, parsed_json.get('cols', 2)), 12),
+            "rows": min(max(1, parsed_json.get('rows', 2)), 20),
+            "rowHeight": min(max(40, parsed_json.get('rowHeight', 200)), 200),
+            "margin": parsed_json.get('margin', [10, 10])
+        }
+        
+        # Create the final config by merging with original config
+        original_config = dashboard_context.get('originalConfig', {})
+        final_config = {**original_config}
+        for key in validated:
+            final_config[key] = validated[key]
+        
+        # Calculate changes
+        changes = {
+            "colsChanged": original_config.get('cols') != final_config.get('cols'),
+            "rowsChanged": original_config.get('rows') != final_config.get('rows'),
+            "rowHeightChanged": original_config.get('rowHeight') != final_config.get('rowHeight'),
+            "marginChanged": original_config.get('margin') != final_config.get('margin')
+        }
+        
+        # Format the complete response structure
+        formatted_response = {
+            "response": {
+                "timestamp": datetime.now().isoformat(),
+                "raw": raw_response,
+                "parsed": parsed_json,
+                "validated": validated
+            },
+            "result": {
+                "finalConfig": final_config,
+                "changes": changes
+            }
+        }
+        
+        # Update Firestore with the formatted response
+        doc_ref.update({
+            'answer': formatted_response,
+            'processed': True,
+            'processed_timestamp': firestore.SERVER_TIMESTAMP
+        })
+        
+        # Return the formatted response
+        return jsonify(formatted_response)
+    except Exception as e:
+        print(f"Error in generate_layout_response: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/process-firebase-query', methods=['POST'])
+def process_firebase_query_api():
+    """API endpoint to process a query from Firebase"""
+    try:
+        query_text = request.form.get('query')
+        if not query_text:
+            return jsonify({"error": "No query provided"}), 400
+        
+        # Extract query ID and prepare to get dashboard context
+        query_id = request.form.get('query_id')
+        dashboard_context = None
+        
+        # Get dashboard context from Firebase if available
+        if db is not None and query_id:
+            try:
+                doc_ref = db.collection('rag_queries').document(query_id)
+                doc = doc_ref.get()
+                if doc.exists:
+                    query_data = doc.to_dict()
+                    if 'dashboardContext' in query_data:
+                        dashboard_context = query_data['dashboardContext']
+            except Exception as e:
+                print(f"Error fetching Firebase document: {str(e)}")
+        
+        # Direct matching for common layout queries
+        layout_config = None
+        query_lower = query_text.lower()
+        
+        # Standard layout optimization
+        if "optimize" in query_lower and "widescreen" in query_lower:
+            layout_config = {
+                "cols": 4,
+                "rows": 3,
+                "rowHeight": 120,
+                "margin": [15, 15]
+            }
+        # Make cards bigger
+        elif "bigger" in query_lower and ("card" in query_lower or "layout" in query_lower):
+            # For bigger cards, reduce columns, increase row height
+            layout_config = {
+                "cols": 2,  # Smaller number of columns makes cards wider
+                "rows": 4,
+                "rowHeight": 180,  # Taller rows
+                "margin": [15, 15]  # Slightly bigger margins
+            }
+        # Compact layout
+        elif "compact" in query_lower or "smaller" in query_lower:
+            layout_config = {
+                "cols": 6,  # More columns for compact view
+                "rows": 6,
+                "rowHeight": 80,  # Smaller height
+                "margin": [5, 5]  # Smaller margins
+            }
+        # Increase spacing
+        elif "spacing" in query_lower or "space" in query_lower:
+            layout_config = {
+                "cols": 3,  # Fewer columns to allow more space
+                "rows": 3,
+                "rowHeight": 150,
+                "margin": [20, 20]  # Larger margins for more space
+            }
+        # Square grid
+        elif "square" in query_lower:
+            layout_config = {
+                "cols": 3,
+                "rows": 3,  # Same number of rows as columns
+                "rowHeight": 150,
+                "margin": [10, 10]
+            }
+        # Custom grid size match
+        elif "grid" in query_lower or "arrange" in query_lower:
+            import re
+            grid_match = re.search(r'(\d+)x(\d+)', query_lower)
+            
+            if grid_match:
+                try:
+                    cols = int(grid_match.group(1))
+                    rows = int(grid_match.group(2))
+                    # Ensure reasonable bounds
+                    cols = min(max(1, cols), 12)
+                    rows = min(max(1, rows), 20)
+                    
+                    layout_config = {
+                        "cols": cols,
+                        "rows": rows,
+                        "rowHeight": 120,
+                        "margin": [10, 10]
+                    }
+                except:
+                    pass
+        
+        # Category matching
+        category = None
+        if "social" in query_lower or "social media" in query_lower:
+            category = "social"
+        elif "work" in query_lower:
+            category = "work"
+        elif "financial" in query_lower or "finance" in query_lower:
+            category = "financial"
+        elif "entertainment" in query_lower:
+            category = "entertainment"
+        elif "utility" in query_lower:
+            category = "utility"
+        elif "transportation" in query_lower:
+            category = "transportation"
+        elif "news" in query_lower:
+            category = "news"
+        elif "all" in query_lower and "app" in query_lower:
+            category = "all"
+        
+        # If we have a layout config or category, generate a direct response
+        if layout_config or category:
+            from datetime import datetime
+            import json
+            
+            if layout_config:
+                # Format layout config as JSON
+                raw_response = f"""```json
+{json.dumps(layout_config, indent=2)}
+```"""
+                
+                if dashboard_context and db is not None and query_id:
+                    try:
+                        doc_ref = db.collection('rag_queries').document(query_id)
+                        # Format response and update Firebase
+                        response_data = generate_layout_response(
+                            doc_ref, 
+                            dashboard_context, 
+                            raw_response, 
+                            layout_config
+                        )
+                        
+                        # Save the raw response to rag_responses collection
+                        if db is not None:
+                            # Save only the clean JSON object, not the markdown code block
+                            save_response_to_firebase(query_text, json.dumps(layout_config, indent=2), "layout", query_id)
+                        
+                        return response_data
+                    except Exception as e:
+                        print(f"Error processing layout response: {str(e)}")
+            
+            if category and db is not None and query_id:
+                try:
+                    # Create standardized category response format
+                    response_data = {
+                        "success": True,
+                        "answer": f"Processed query: \"{query_text}\" for category: {category}",
+                        "query_embedding_visualization": {
+                            "x": 0.5,  # Default placeholder values
+                            "y": 0.5, 
+                            "z": 0.5
+                        },
+                        "category": category
+                    }
+                    
+                    # Update the Firebase document with consistent format
+                    doc_ref = db.collection('rag_queries').document(query_id)
+                    doc_ref.update({
+                        'answer': response_data,
+                        'processed': True,
+                        'processed_timestamp': firestore.SERVER_TIMESTAMP
+                    })
+                    
+                    # Save the raw response to rag_responses collection
+                    if db is not None:
+                        save_response_to_firebase(query_text, json.dumps(response_data), "category", query_id)
+                    
+                    return jsonify(response_data)
+                except Exception as e:
+                    print(f"Error processing category response: {str(e)}")
+        
+        # If not a standard query, process using the regular RAG flow
+        # Add dashboard context temporarily to ChromaDB if available
+        temp_id = None
+        if dashboard_context:
+            try:
+                import json
+                dashboard_text = f"""Dashboard Configuration:
+                cols: {dashboard_context.get('originalConfig', {}).get('cols', 2)}
+                rows: {dashboard_context.get('originalConfig', {}).get('rows', 2)}
+                rowHeight: {dashboard_context.get('originalConfig', {}).get('rowHeight', 200)}
+                margin: {dashboard_context.get('originalConfig', {}).get('margin', [10, 10])}
+                numApps: {dashboard_context.get('originalConfig', {}).get('numApps', 4)}
+                activeCategory: {dashboard_context.get('originalConfig', {}).get('activeCategory', 'default')}
+                
+                Raw config: {json.dumps(dashboard_context.get('originalConfig', {}))}
+                """
+                
+                # Add to ChromaDB temporarily for this query
+                embedding = model.encode(dashboard_text).tolist()
+                temp_id = f"temp_dashboard_{query_id}"
+                
+                # Check if we already have this temp document
+                try:
+                    collection.get(ids=[temp_id])
+                    # If it exists, delete it first
+                    collection.delete(ids=[temp_id])
+                except:
+                    pass
+                    
+                # Add the temporary dashboard context
+                collection.add(
+                    embeddings=[embedding],
+                    documents=[dashboard_text],
+                    ids=[temp_id],
+                    metadatas=[{"source": "Firebase Dashboard Context", "temp": True}]
+                )
+                print(f"Added temporary dashboard context document with ID: {temp_id}")
+            except Exception as e:
+                print(f"Error adding dashboard context to ChromaDB: {str(e)}")
+        
+        # Process the query using standard RAG
+        result = process_search_query(query_text)
+        
+        # Clean up temporary collection entry if it exists
+        if temp_id:
+            try:
+                collection.delete(ids=[temp_id])
+                print(f"Deleted temporary dashboard context document with ID: {temp_id}")
+            except Exception as e:
+                print(f"Error deleting temporary dashboard context: {str(e)}")
+        
+        # Check for layout patterns in the result and format accordingly
+        if "```json" in result['answer'] and ("cols" in result['answer'] or "rows" in result['answer']):
+            # This is likely a layout response, process it as such
+            try:
+                # Extract JSON content from the code block
+                import json
+                import re
+                
+                # Extract the JSON content from the markdown code block
+                json_match = re.search(r'```json\s*\n(.*?)\n\s*```', result['answer'], re.DOTALL)
+                if json_match:
+                    json_content = json_match.group(1).strip()
+                    parsed_json = json.loads(json_content)
+                    
+                    # Update Firebase with proper layout format
+                    if db is not None and query_id and dashboard_context:
+                        doc_ref = db.collection('rag_queries').document(query_id)
+                        response_data = generate_layout_response(
+                            doc_ref,
+                            dashboard_context,
+                            result['answer'],
+                            parsed_json
+                        )
+                        
+                        # Save the raw response to rag_responses collection
+                        if db is not None:
+                            # Save only the clean JSON object, not the markdown code block
+                            save_response_to_firebase(query_text, json_content, "layout", query_id)
+                        
+                        return response_data
+            except Exception as e:
+                print(f"Error parsing layout JSON from RAG response: {str(e)}")
+        
+        # Update Firebase with the result (standard format if not layout or category)
+        if db is not None and query_id:
+            try:
+                doc_ref = db.collection('rag_queries').document(query_id)
+                doc_ref.update({
+                    'answer': result,
+                    'processed': True,
+                    'processed_timestamp': firestore.SERVER_TIMESTAMP
+                })
+                
+                # Save the raw response to rag_responses collection
+                if db is not None:
+                    save_response_to_firebase(query_text, json.dumps(result), "standard", query_id)
+            except Exception as e:
+                print(f"Error updating Firebase: {str(e)}")
+        
+        return jsonify(result)
+    
+    except Exception as e:
+        print(f"Error processing Firebase query: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+def save_response_to_firebase(query, raw_response, response_type, original_query_id=None):
+    """Save raw RAG response to Firebase for future reference and analysis"""
+    if db is None:
+        print("Firebase not initialized, cannot save response")
+        return
+    
+    try:
+        # Create a new document in the rag_responses collection
+        rag_responses_ref = db.collection('rag_responses')
+        
+        # Prepare the data to be saved
+        response_data = {
+            'query': query,
+            'raw_response': raw_response,
+            'response_type': response_type,
+            'original_query_id': original_query_id,
+            'timestamp': firestore.SERVER_TIMESTAMP,
+            'embeddings_count': len(collection.get()['ids']) if collection.get() and 'ids' in collection.get() else 0
+        }
+        
+        # Add the document to the collection
+        rag_responses_ref.add(response_data)
+        print(f"Successfully saved response to rag_responses collection")
+    
+    except Exception as e:
+        print(f"Error saving response to Firebase: {str(e)}")
+
 if __name__ == '__main__':
-    app.run(debug=True) 
+    app.run(debug=True, host='0.0.0.0', port=5000) 

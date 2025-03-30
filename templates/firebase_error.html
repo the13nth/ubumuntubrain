@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Firebase Error</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            line-height: 1.6;
+        }
+        .container {
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            padding: 20px;
+            margin-bottom: 20px;
+            background-color: #f9f9f9;
+        }
+        .heading {
+            background-color: #ea4335;
+            color: white;
+            padding: 10px 20px;
+            border-radius: 5px;
+            margin-bottom: 20px;
+        }
+        .error-box {
+            background-color: #ffebee;
+            padding: 15px;
+            border-radius: 5px;
+            margin-bottom: 15px;
+            border-left: 4px solid #ea4335;
+        }
+        .home-btn {
+            background-color: #4285f4;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+            text-decoration: none;
+            display: inline-block;
+        }
+        .home-btn:hover {
+            background-color: #3367d6;
+        }
+    </style>
+</head>
+<body>
+    <div class="heading">
+        <h1>Firebase Error</h1>
+    </div>
+
+    <div class="container">
+        <h2>Error Connecting to Firebase</h2>
+        
+        <div class="error-box">
+            <h3>Error Details:</h3>
+            <p>{{ error }}</p>
+        </div>
+
+        <h3>Possible Causes:</h3>
+        <ul>
+            <li>Firebase service account credentials may be incorrect</li>
+            <li>Firebase project may not be properly set up</li>
+            <li>Network connectivity issues</li>
+            <li>Required Firebase collections may not exist</li>
+        </ul>
+
+        <h3>Steps to Fix:</h3>
+        <ol>
+            <li>Verify that the firebase-key.json file contains valid credentials</li>
+            <li>Make sure the 'rag_queries' collection exists in your Firestore database</li>
+            <li>Check your network connection</li>
+            <li>Ensure Firebase Admin SDK is properly installed</li>
+        </ol>
+
+        <a href="/" class="home-btn">Back to Home</a>
+    </div>
+</body>
+</html> 

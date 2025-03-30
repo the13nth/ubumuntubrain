@@ -1,0 +1,557 @@
+{
+  "categoryQueries": {
+    "social": {
+      "query": "Display Social apps",
+      "response": {
+        "success": true,
+        "answer": "Processed query: \"Display Social apps\" for category: social",
+        "query_embedding_visualization": {
+          "x": 0.7234,
+          "y": 0.4981,
+          "z": 0.2756
+        },
+        "category": "social"
+      },
+      "systemActions": [
+        "Changed activeCategory to \"social\"",
+        "Filtered apps to show only social apps (Facebook, Instagram, Whatsapp, Twitter)",
+        "Recalculated grid dimensions to 3x2 based on 4 apps",
+        "Adjusted rowHeight to 150px to maximize viewport usage",
+        "Saved new configuration to localStorage",
+        "Logged interaction to Firebase including previous dashboard context"
+      ]
+    },
+    "work": {
+      "query": "Show work apps only",
+      "response": {
+        "success": true,
+        "answer": "Processed query: \"Show work apps only\" for category: work",
+        "query_embedding_visualization": {
+          "x": 0.5621,
+          "y": 0.3478,
+          "z": 0.7892
+        },
+        "category": "work"
+      },
+      "systemActions": [
+        "Changed activeCategory to \"work\"",
+        "Filtered apps to show only work apps (Google Mail, Skype)",
+        "Recalculated grid dimensions to 2x1 based on 2 apps",
+        "Adjusted rowHeight to 180px to maximize viewport usage",
+        "Saved new configuration to localStorage",
+        "Logged interaction to Firebase including previous dashboard context"
+      ]
+    },
+    "financial": {
+      "query": "Display financial apps",
+      "response": {
+        "success": true,
+        "answer": "Processed query: \"Display financial apps\" for category: financial",
+        "query_embedding_visualization": {
+          "x": 0.2154,
+          "y": 0.8976,
+          "z": 0.4329
+        },
+        "category": "financial"
+      },
+      "systemActions": [
+        "Changed activeCategory to \"financial\"",
+        "Filtered apps to show only financial apps (Number 26)",
+        "Recalculated grid dimensions to 1x1 based on 1 app",
+        "Adjusted rowHeight to 200px to maximize viewport usage",
+        "Saved new configuration to localStorage",
+        "Logged interaction to Firebase including previous dashboard context"
+      ]
+    },
+    "entertainment": {
+      "query": "Show entertainment apps",
+      "response": {
+        "success": true,
+        "answer": "Processed query: \"Show entertainment apps\" for category: entertainment",
+        "query_embedding_visualization": {
+          "x": 0.3721,
+          "y": 0.6123,
+          "z": 0.5487
+        },
+        "category": "entertainment"
+      },
+      "systemActions": [
+        "Changed activeCategory to \"entertainment\"",
+        "Filtered apps to show only entertainment apps (Spotify)",
+        "Recalculated grid dimensions to 1x1 based on 1 app",
+        "Adjusted rowHeight to 200px to maximize viewport usage",
+        "Saved new configuration to localStorage",
+        "Logged interaction to Firebase including previous dashboard context"
+      ]
+    },
+    "utility": {
+      "query": "Show utility apps",
+      "response": {
+        "success": true,
+        "answer": "Processed query: \"Show utility apps\" for category: utility",
+        "query_embedding_visualization": {
+          "x": 0.8731,
+          "y": 0.2345,
+          "z": 0.6123
+        },
+        "category": "utility"
+      },
+      "systemActions": [
+        "Changed activeCategory to \"utility\"",
+        "Filtered apps to show only utility apps (Google Maps)",
+        "Recalculated grid dimensions to 1x1 based on 1 app",
+        "Adjusted rowHeight to 200px to maximize viewport usage",
+        "Saved new configuration to localStorage",
+        "Logged interaction to Firebase including previous dashboard context"
+      ]
+    },
+    "transportation": {
+      "query": "Show transportation apps",
+      "response": {
+        "success": true,
+        "answer": "Processed query: \"Show transportation apps\" for category: transportation",
+        "query_embedding_visualization": {
+          "x": 0.4567,
+          "y": 0.7893,
+          "z": 0.3216
+        },
+        "category": "transportation"
+      },
+      "systemActions": [
+        "Changed activeCategory to \"transportation\"",
+        "Filtered apps to show only transportation apps (Uber, Drive Now)",
+        "Recalculated grid dimensions to 2x1 based on 2 apps",
+        "Adjusted rowHeight to 180px to maximize viewport usage",
+        "Saved new configuration to localStorage",
+        "Logged interaction to Firebase including previous dashboard context"
+      ]
+    },
+    "news": {
+      "query": "Show news apps",
+      "response": {
+        "success": true,
+        "answer": "Processed query: \"Show news apps\" for category: news",
+        "query_embedding_visualization": {
+          "x": 0.5678,
+          "y": 0.4321,
+          "z": 0.8765
+        },
+        "category": "news"
+      },
+      "systemActions": [
+        "Changed activeCategory to \"news\"",
+        "Filtered apps to show only news apps (New York Times)",
+        "Recalculated grid dimensions to 1x1 based on 1 app",
+        "Adjusted rowHeight to 200px to maximize viewport usage",
+        "Saved new configuration to localStorage",
+        "Logged interaction to Firebase including previous dashboard context"
+      ]
+    },
+    "all": {
+      "query": "Show all apps",
+      "response": {
+        "success": true,
+        "answer": "Processed query: \"Show all apps\" for category: all",
+        "query_embedding_visualization": {
+          "x": 0.1875,
+          "y": 0.6234,
+          "z": 0.8945
+        },
+        "category": "all"
+      },
+      "systemActions": [
+        "Changed activeCategory to null",
+        "Restored display of all 12 apps",
+        "Recalculated grid dimensions to 5x10",
+        "Adjusted rowHeight to 60px to accommodate more apps",
+        "Saved new configuration to localStorage",
+        "Logged interaction to Firebase including previous dashboard context"
+      ]
+    }
+  },
+  "layoutQueries": {
+    "bigger": {
+      "query": "Make the cards bigger",
+      "response": {
+        "response": {
+          "timestamp": "2025-03-30T01:05:37.402Z",
+          "raw": "```json\n{\n  \"cols\": 2,\n  \"rows\": 4,\n  \"rowHeight\": 180,\n  \"margin\": [15, 15]\n}\n```\n",
+          "parsed": {
+            "cols": 2,
+            "rows": 4,
+            "rowHeight": 180,
+            "margin": [15, 15]
+          },
+          "validated": {
+            "cols": 2,
+            "rows": 4,
+            "rowHeight": 180,
+            "margin": [15, 15]
+          }
+        },
+        "result": {
+          "finalConfig": {
+            "cols": 2,
+            "rows": 4,
+            "rowHeight": 180,
+            "margin": [15, 15]
+          },
+          "changes": {
+            "colsChanged": true,
+            "rowsChanged": true,
+            "rowHeightChanged": true,
+            "marginChanged": true
+          }
+        },
+        "healthContext": {
+          "diabetesInfo": {
+            "lastReading": {
+              "glucoseLevel": 128,
+              "timestamp": "2024-03-20T08:30:00Z",
+              "status": "Slightly Elevated"
+            },
+            "dailyStats": {
+              "averageGlucose": 118,
+              "readings": 6,
+              "inRange": 5,
+              "high": 1,
+              "low": 0
+            },
+            "medications": [
+              {
+                "name": "Metformin",
+                "dosage": "500mg",
+                "frequency": "Twice daily",
+                "lastTaken": "2024-03-20T08:00:00Z"
+              }
+            ],
+            "recommendations": [
+              "Consider light exercise before next meal",
+              "Stay hydrated",
+              "Next reading due in 2 hours"
+            ]
+          }
+        }
+      }
+    },
+    "compact": {
+      "query": "Create a more compact layout",
+      "response": {
+        "response": {
+          "timestamp": "2025-03-30T01:05:37.402Z",
+          "raw": "```json\n{\n  \"cols\": 6,\n  \"rows\": 6,\n  \"rowHeight\": 80,\n  \"margin\": [5, 5]\n}\n```\n",
+          "parsed": {
+            "cols": 6,
+            "rows": 6,
+            "rowHeight": 80,
+            "margin": [5, 5]
+          },
+          "validated": {
+            "cols": 6,
+            "rows": 6,
+            "rowHeight": 80,
+            "margin": [5, 5]
+          }
+        },
+        "result": {
+          "finalConfig": {
+            "cols": 6,
+            "rows": 6,
+            "rowHeight": 80,
+            "margin": [5, 5]
+          },
+          "changes": {
+            "colsChanged": true,
+            "rowsChanged": true,
+            "rowHeightChanged": true,
+            "marginChanged": true
+          }
+        },
+        "healthContext": {
+          "diabetesInfo": {
+            "lastReading": {
+              "glucoseLevel": 95,
+              "timestamp": "2024-03-20T10:30:00Z",
+              "status": "Normal"
+            },
+            "dailyStats": {
+              "averageGlucose": 105,
+              "readings": 7,
+              "inRange": 7,
+              "high": 0,
+              "low": 0
+            },
+            "medications": [
+              {
+                "name": "Metformin",
+                "dosage": "500mg",
+                "frequency": "Twice daily",
+                "lastTaken": "2024-03-20T08:00:00Z"
+              }
+            ],
+            "recommendations": [
+              "Maintain current activity level",
+              "Next meal in 1 hour",
+              "Remember to log pre-meal reading"
+            ]
+          }
+        }
+      }
+    },
+    "widescreen": {
+      "query": "Optimize for widescreen display",
+      "response": {
+        "response": {
+          "timestamp": "2025-03-30T01:05:37.402Z",
+          "raw": "```json\n{\n  \"cols\": 4,\n  \"rows\": 3,\n  \"rowHeight\": 120,\n  \"margin\": [15, 15]\n}\n```\n",
+          "parsed": {
+            "cols": 4,
+            "rows": 3,
+            "rowHeight": 120,
+            "margin": [15, 15]
+          },
+          "validated": {
+            "cols": 4,
+            "rows": 3,
+            "rowHeight": 120,
+            "margin": [15, 15]
+          }
+        },
+        "result": {
+          "finalConfig": {
+            "cols": 4,
+            "rows": 3,
+            "rowHeight": 120,
+            "margin": [15, 15]
+          },
+          "changes": {
+            "colsChanged": true,
+            "rowsChanged": true,
+            "rowHeightChanged": true,
+            "marginChanged": true
+          }
+        }
+      }
+    },
+    "spacing": {
+      "query": "Increase spacing between cards",
+      "response": {
+        "response": {
+          "timestamp": "2025-03-30T01:05:37.402Z",
+          "raw": "```json\n{\n  \"cols\": 3,\n  \"rows\": 3,\n  \"rowHeight\": 150,\n  \"margin\": [20, 20]\n}\n```\n",
+          "parsed": {
+            "cols": 3,
+            "rows": 3,
+            "rowHeight": 150,
+            "margin": [20, 20]
+          },
+          "validated": {
+            "cols": 3,
+            "rows": 3,
+            "rowHeight": 150,
+            "margin": [20, 20]
+          }
+        },
+        "result": {
+          "finalConfig": {
+            "cols": 3,
+            "rows": 3,
+            "rowHeight": 150,
+            "margin": [20, 20]
+          },
+          "changes": {
+            "colsChanged": true,
+            "rowsChanged": true,
+            "rowHeightChanged": true,
+            "marginChanged": true
+          }
+        }
+      }
+    },
+    "square": {
+      "query": "Make the grid more square-shaped",
+      "response": {
+        "response": {
+          "timestamp": "2025-03-30T01:05:37.402Z",
+          "raw": "```json\n{\n  \"cols\": 3,\n  \"rows\": 3,\n  \"rowHeight\": 150,\n  \"margin\": [10, 10]\n}\n```\n",
+          "parsed": {
+            "cols": 3,
+            "rows": 3,
+            "rowHeight": 150,
+            "margin": [10, 10]
+          },
+          "validated": {
+            "cols": 3,
+            "rows": 3,
+            "rowHeight": 150,
+            "margin": [10, 10]
+          }
+        },
+        "result": {
+          "finalConfig": {
+            "cols": 3,
+            "rows": 3,
+            "rowHeight": 150,
+            "margin": [10, 10]
+          },
+          "changes": {
+            "colsChanged": true,
+            "rowsChanged": true,
+            "rowHeightChanged": true,
+            "marginChanged": true
+          }
+        }
+      }
+    },
+    "specificGrid": {
+      "query": "Arrange in a 3x4 grid",
+      "response": {
+        "response": {
+          "timestamp": "2025-03-30T01:05:37.402Z",
+          "raw": "```json\n{\n  \"cols\": 3,\n  \"rows\": 4,\n  \"rowHeight\": 120,\n  \"margin\": [10, 10]\n}\n```\n",
+          "parsed": {
+            "cols": 3,
+            "rows": 4,
+            "rowHeight": 120,
+            "margin": [10, 10]
+          },
+          "validated": {
+            "cols": 3,
+            "rows": 4,
+            "rowHeight": 120,
+            "margin": [10, 10]
+          }
+        },
+        "result": {
+          "finalConfig": {
+            "cols": 3,
+            "rows": 4,
+            "rowHeight": 120,
+            "margin": [10, 10]
+          },
+          "changes": {
+            "colsChanged": true,
+            "rowsChanged": true,
+            "rowHeightChanged": true,
+            "marginChanged": true
+          }
+        }
+      }
+    }
+  },
+  "errorResponses": {
+    "permissionError": {
+      "query": "Display Social apps",
+      "response": {
+        "answer": "Error: Missing or insufficient permissions.",
+        "error": "Missing or insufficient permissions."
+      },
+      "systemActions": [
+        "Attempted to save query to Firebase but encountered a permissions error",
+        "Maintained current dashboard configuration",
+        "Displayed error message to user",
+        "Logged error to console"
+      ]
+    },
+    "connectionError": {
+      "query": "Display Social apps",
+      "response": {
+        "answer": "Error: Failed to connect to the database server.",
+        "error": "Failed to connect to the database server."
+      },
+      "systemActions": [
+        "Attempted to save query to Firebase but encountered a connection error",
+        "Maintained current dashboard configuration",
+        "Displayed error message to user",
+        "Logged error to console"
+      ]
+    },
+    "parsingError": {
+      "query": "Arrange into a weird layout",
+      "response": {
+        "answer": "Error: Could not parse the requested configuration.",
+        "error": "Could not parse the requested configuration."
+      },
+      "systemActions": [
+        "Attempted to process the query but could not interpret the request",
+        "Maintained current dashboard configuration",
+        "Displayed error message to user",
+        "Logged error to console and Firebase"
+      ]
+    }
+  },
+  "responseFormatExamples": {
+    "categoryQuery": {
+      "success": true,
+      "answer": "Processed query: \"[QUERY TEXT]\" for category: [CATEGORY]",
+      "query_embedding_visualization": {
+        "x": 0.5,
+        "y": 0.5,
+        "z": 0.5
+      },
+      "category": "[CATEGORY NAME]"
+    },
+    "layoutQuery": {
+      "response": {
+        "timestamp": "2025-03-30T01:05:37.402Z",
+        "raw": "```json\n{\n  \"cols\": 4,\n  \"rows\": 3,\n  \"rowHeight\": 120,\n  \"margin\": [15, 15]\n}\n```\n",
+        "parsed": {
+          "cols": 4,
+          "rows": 3,
+          "rowHeight": 120,
+          "margin": [15, 15]
+        },
+        "validated": {
+          "cols": 4,
+          "rows": 3,
+          "rowHeight": 120,
+          "margin": [15, 15]
+        }
+      },
+      "result": {
+        "finalConfig": {
+          "cols": 4,
+          "rows": 3,
+          "rowHeight": 120,
+          "margin": [15, 15]
+        },
+        "changes": {
+          "colsChanged": true,
+          "rowsChanged": true,
+          "rowHeightChanged": true,
+          "marginChanged": true
+        }
+      },
+      "healthContext": {
+        "diabetesInfo": {
+          "lastReading": {
+            "glucoseLevel": 110,
+            "timestamp": "2024-03-20T14:30:00Z",
+            "status": "Normal"
+          },
+          "dailyStats": {
+            "averageGlucose": 112,
+            "readings": 8,
+            "inRange": 8,
+            "high": 0,
+            "low": 0
+          },
+          "medications": [
+            {
+              "name": "Metformin",
+              "dosage": "500mg",
+              "frequency": "Twice daily",
+              "lastTaken": "2024-03-20T08:00:00Z",
+              "nextDue": "2024-03-20T20:00:00Z"
+            }
+          ],
+          "recommendations": [
+            "Schedule is on track",
+            "Consider a short walk after next meal",
+            "Next reading due before dinner"
+          ]
+        }
+      }
+    }
+  }
+} 

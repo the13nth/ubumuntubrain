@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RAG Query Result</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            line-height: 1.6;
+        }
+        .container {
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            padding: 20px;
+            margin-bottom: 20px;
+            background-color: #f9f9f9;
+        }
+        .heading {
+            background-color: #4285f4;
+            color: white;
+            padding: 10px 20px;
+            border-radius: 5px;
+            margin-bottom: 20px;
+        }
+        .query-box {
+            background-color: #e7f5fe;
+            padding: 15px;
+            border-radius: 5px;
+            margin-bottom: 15px;
+            border-left: 4px solid #4285f4;
+        }
+        .answer-box {
+            background-color: #f0f8ff;
+            padding: 15px;
+            border-radius: 5px;
+            margin-bottom: 15px;
+            border-left: 4px solid #34a853;
+        }
+        .back-btn {
+            background-color: #4285f4;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+            text-decoration: none;
+            display: inline-block;
+        }
+        .back-btn:hover {
+            background-color: #3367d6;
+        }
+    </style>
+</head>
+<body>
+    <div class="heading">
+        <h1>RAG Query Result</h1>
+    </div>
+
+    <div class="container">
+        <h2>Results from RAG System</h2>
+        
+        <div class="query-box">
+            <h3>Query:</h3>
+            <p>{{ query }}</p>
+        </div>
+
+        <div class="answer-box">
+            <h3>Answer:</h3>
+            <p>{{ result.answer }}</p>
+        </div>
+
+        <a href="/firebase-query" class="back-btn">Back to Firebase Queries</a>
+    </div>
+</body>
+</html> 

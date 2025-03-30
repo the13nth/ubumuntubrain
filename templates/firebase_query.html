@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Firebase Query</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            line-height: 1.6;
+        }
+        .container {
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            padding: 20px;
+            margin-bottom: 20px;
+            background-color: #f9f9f9;
+        }
+        .heading {
+            background-color: #4285f4;
+            color: white;
+            padding: 10px 20px;
+            border-radius: 5px;
+            margin-bottom: 20px;
+        }
+        .no-query {
+            color: #777;
+            font-style: italic;
+            padding: 20px;
+            text-align: center;
+            border: 1px dashed #ccc;
+        }
+        .query-box {
+            background-color: #e7f5fe;
+            padding: 15px;
+            border-radius: 5px;
+            margin-bottom: 15px;
+            border-left: 4px solid #4285f4;
+        }
+        .query-info {
+            font-size: 0.9em;
+            color: #777;
+            margin-top: 10px;
+        }
+        .submit-btn {
+            background-color: #4285f4;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+        }
+        .submit-btn:hover {
+            background-color: #3367d6;
+        }
+        .refresh-btn {
+            background-color: #34a853;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+            margin-left: 10px;
+        }
+        .refresh-btn:hover {
+            background-color: #2e8e46;
+        }
+    </style>
+</head>
+<body>
+    <div class="heading">
+        <h1>Firebase Query</h1>
+    </div>
+
+    <div class="container">
+        <h2>Latest Query from Firebase</h2>
+        
+        {% if query %}
+            <div class="query-box">
+                <h3>Query:</h3>
+                <p>{{ query.query }}</p>
+                
+                <div class="query-info">
+                    <p>Submitted: {{ query.timestamp.strftime('%Y-%m-%d %H:%M:%S') if query.timestamp else 'Unknown' }}</p>
+                    <p>Source: {{ query.source or 'Unknown' }}</p>
+                    <p>Status: {{ 'Processed' if query.processed else 'Not Processed' }}</p>
+                </div>
+            </div>
+
+            <form action="/submit-firebase-query" method="post">
+                <input type="hidden" name="query" value="{{ query.query }}">
+                <input type="hidden" name="query_id" value="{{ query.id }}">
+                <button type="submit" class="submit-btn">Submit to RAG System</button>
+                <a href="/firebase-query" class="refresh-btn">Refresh</a>
+            </form>
+        {% else %}
+            <div class="no-query">
+                <p>No queries found in Firebase.</p>
+            </div>
+            <a href="/firebase-query" class="refresh-btn">Refresh</a>
+        {% endif %}
+    </div>
+</body>
+</html> 

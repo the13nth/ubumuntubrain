@@ -18,6 +18,7 @@ from flask_cors import CORS
 import firebase_admin
 from firebase_admin import credentials, firestore
 import datetime
+import sqlite3
 
 # Load environment variables
 load_dotenv()
@@ -50,20 +51,49 @@ app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 # Create uploads directory if it doesn't exist
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
-# Initialize ChromaDB
-client = chromadb.Client(Settings(
-    persist_directory="chroma_db",
-    anonymized_telemetry=False
-))
-
-# Create or get the collection
-collection = client.get_or_create_collection(
-    name="text_embeddings",
-    metadata={"hnsw:space": "cosine"}
-)
-
 # Initialize the sentence transformer model
 model = SentenceTransformer('all-MiniLM-L6-v2')
+print("Sentence transformer model initialized")
+
+# Initialize ChromaDB with logging
+try:
+    print("Initializing ChromaDB...")
+    client = chromadb.Client(Settings(
+        persist_directory="chroma_db",
+        anonymized_telemetry=False
+    ))
+    print("ChromaDB client created successfully")
+
+    # Create or get the collection with logging
+    collection = client.get_or_create_collection(
+        name="text_embeddings",
+        metadata={"hnsw:space": "cosine"}
+    )
+    print(f"Collection initialized. Current count: {len(collection.get()['ids'])}")
+
+    # Add test data if collection is empty
+    if len(collection.get()['ids']) == 0:
+        print("Adding test data to empty collection...")
+        test_data = [
+            "This is a test document about health context.",
+            "This is a test document about work context.",
+            "This is a test document about commute context."
+        ]
+        embeddings = [model.encode(text).tolist() for text in test_data]
+        collection.add(
+            embeddings=embeddings,
+            documents=test_data,
+            ids=[f"test_{i+1}" for i in range(len(test_data))],
+            metadatas=[
+                {"source": "Test", "type": "health"},
+                {"source": "Test", "type": "work"},
+                {"source": "Test", "type": "commute"}
+            ]
+        )
+        print(f"Added {len(test_data)} test documents")
+except Exception as e:
+    print(f"Error initializing ChromaDB: {str(e)}")
+    raise e
 
 # Initialize Gemini
 genai.configure(api_key=os.getenv('GOOGLE_API_KEY'))
@@ -190,8 +220,8 @@ def process_search_query(query):
     # Search in ChromaDB
     results = collection.query(
         query_embeddings=[query_embedding],
-        n_results=5,
-        include=['embeddings', 'documents', 'metadatas']
+        n_results=10,  # Increased to get more relevant contexts
+        include=['embeddings', 'documents', 'metadatas', 'distances']
     )
     
     # Make sure we have results
@@ -216,12 +246,31 @@ def process_search_query(query):
         results
     )
     
-    # Generate answer using Gemini
-    answer = generate_answer(query, results['documents'][0])
+    # Process matching contexts with relevance scores
+    matching_contexts = []
+    for i in range(len(results['documents'][0])):
+        # Convert distance to similarity score (1 - normalized_distance)
+        similarity = 1 - min(results['distances'][0][i], 1.0)  # Ensure distance is not > 1
+        context_type = results['metadatas'][0][i].get('type', 'unknown')
+        
+        matching_contexts.append({
+            'type': context_type,
+            'text': results['documents'][0][i],
+            'relevance': similarity,
+            'metadata': results['metadatas'][0][i]
+        })
+    
+    # Sort contexts by relevance
+    matching_contexts.sort(key=lambda x: x['relevance'], reverse=True)
+    
+    # Generate answer using Gemini with all relevant contexts
+    context_texts = [ctx['text'] for ctx in matching_contexts]
+    answer = generate_answer(query, context_texts)
     
     return {
         "answer": answer,
-        "query_embedding_visualization": visualization_data["query_point"]
+        "query_embedding_visualization": visualization_data["query_point"],
+        "matching_contexts": matching_contexts
     }
 
 def process_embeddings_for_visualization(embeddings, query_embedding, results):
@@ -251,51 +300,27 @@ def process_embeddings_for_visualization(embeddings, query_embedding, results):
         }
     }
 
-def generate_answer(query, relevant_docs):
-    """Generate an answer using Gemini."""
-    # Check for widescreen optimization specifically
-    if "optimize" in query.lower() and "widescreen" in query.lower():
-        # Look for the template in relevant docs
-        for doc in relevant_docs:
-            if isinstance(doc, str) and "layoutQueries" in doc and "widescreen" in doc:
-                try:
-                    import json
-                    import re
-                    
-                    # Try to parse as JSON
-                    json_data = json.loads(doc)
-                    if isinstance(json_data, dict) and "layoutQueries" in json_data and "widescreen" in json_data["layoutQueries"]:
-                        # Return the formatted layout JSON directly
-                        widescreen_data = json_data["layoutQueries"]["widescreen"]
-                        return """```json
-{
-  "cols": 4,
-  "rows": 3,
-  "rowHeight": 120,
-  "margin": [15, 15]
-}
-```"""
-                except Exception as e:
-                    print(f"Error extracting widescreen template: {str(e)}")
+def generate_answer(query, context_texts):
+    """Generate an answer using Gemini with multiple contexts."""
+    if not context_texts:
+        return "I couldn't find any relevant information to answer your question."
     
-    if relevant_docs:
-        prompt = create_rag_prompt(query, relevant_docs)
-        
-        # If model isn't available, provide fallback response
-        if model_gemini is None:
-            return f"Found {len(relevant_docs)} relevant documents but AI generation is unavailable. Please check your API key."
-        
-        try:
-            response = model_gemini.generate_content(prompt)
-            return response.text if hasattr(response, 'text') and response.text else "I couldn't generate a response based on the context."
-        except Exception as e:
-            print(f"Error generating content: {str(e)}")
-            # Return a helpful error message with retrieved document snippets
-            doc_snippets = [doc[:100] + "..." if len(doc) > 100 else doc for doc in relevant_docs[:2]]
-            snippets_text = "\n\n".join([f"Document snippet {i+1}: {snippet}" for i, snippet in enumerate(doc_snippets)])
-            return f"Error generating AI response. Found {len(relevant_docs)} relevant documents. Here are some snippets:\n\n{snippets_text}"
-    
-    return "I couldn't find any relevant information to answer your question."
+    # Create a prompt that includes all relevant contexts
+    prompt = f"""You are a helpful AI assistant that answers questions based on the provided contexts. 
+Your answers should be:
+1. Accurate and based only on the provided contexts
+2. Clear and well-structured
+3. Include relevant quotes or references from the source contexts when appropriate
+
+Contexts:
+{chr(10).join([f"Context {i+1}:{chr(10)}{text}" for i, text in enumerate(context_texts)])}
+
+Question: {query}
+
+Please provide a comprehensive answer based on the above contexts. If the contexts don't contain enough information to answer the question fully, please state that explicitly."""
+
+    response = model_gemini.generate_content(prompt)
+    return response.text if response.text else "I couldn't generate a response based on the contexts."
 
 # Update the existing search endpoint to use the new processing functions
 @app.route('/api/search', methods=['POST'])
@@ -415,11 +440,14 @@ def upload_file():
 @app.route('/api/data')
 def get_data():
     try:
+        print("Fetching data from ChromaDB...")
         # Get all data from ChromaDB with embeddings included
         data = collection.get(include=['embeddings', 'documents', 'metadatas'])
+        print(f"Retrieved {len(data['ids'] if 'ids' in data else [])} documents from ChromaDB")
         
         # If there's no data, return an empty list
         if not data or 'ids' not in data:
+            print("No data found in ChromaDB")
             return jsonify([])
         
         # Format the data for the table
@@ -428,10 +456,11 @@ def get_data():
             formatted_data.append({
                 'id': data['ids'][i],
                 'document': data['documents'][i][:100] + '...' if len(data['documents'][i]) > 100 else data['documents'][i],
-                'embedding_size': len(data['embeddings'][i]),  # This will now have the actual embedding size
+                'embedding_size': len(data['embeddings'][i]),
                 'source': data.get('metadatas', [{}])[i].get('source', 'Manual Input') if data.get('metadatas') else 'Manual Input'
             })
         
+        print(f"Formatted {len(formatted_data)} documents for display")
         return jsonify(formatted_data)
     except Exception as e:
         print(f"Error in get_data: {str(e)}")
@@ -439,6 +468,7 @@ def get_data():
 
 @app.route('/api/embeddings-visualization')
 def get_embeddings_visualization():
+    """Get embeddings visualization data with improved 3D visualization"""
     try:
         # Get all data from ChromaDB with embeddings included
         data = collection.get(include=['embeddings', 'documents', 'metadatas'])
@@ -447,7 +477,12 @@ def get_embeddings_visualization():
         if not data or 'embeddings' not in data or not data['embeddings']:
             return jsonify({
                 "points": [],
-                "variance_explained": [0, 0, 0]
+                "variance_explained": [0, 0, 0],
+                "metadata": {
+                    "total_points": 0,
+                    "categories": {},
+                    "sources": {}
+                }
             })
         
         # Convert embeddings to numpy array
@@ -461,7 +496,12 @@ def get_embeddings_visualization():
         if n_components < 1:
             return jsonify({
                 "points": [],
-                "variance_explained": [0, 0, 0]
+                "variance_explained": [0, 0, 0],
+                "metadata": {
+                    "total_points": 0,
+                    "categories": {},
+                    "sources": {}
+                }
             })
         
         # Apply PCA to reduce dimensions
@@ -472,25 +512,61 @@ def get_embeddings_visualization():
         coords_3d = np.zeros((reduced_embeddings.shape[0], 3))
         coords_3d[:, :n_components] = reduced_embeddings
         
-        # Prepare the visualization data
+        # Normalize coordinates to [-1, 1] range for better visualization
+        for i in range(3):
+            if np.max(np.abs(coords_3d[:, i])) > 0:
+                coords_3d[:, i] = coords_3d[:, i] / np.max(np.abs(coords_3d[:, i]))
+        
+        # Prepare the visualization data with enhanced metadata
         points = []
+        categories = {}
+        sources = {}
+        
         for i in range(len(coords_3d)):
-            points.append({
+            # Get metadata for this point
+            metadata = data.get('metadatas', [{}])[i]
+            doc_type = metadata.get('type', 'unknown')
+            source = metadata.get('source', 'unknown')
+            
+            # Update category and source counts
+            categories[doc_type] = categories.get(doc_type, 0) + 1
+            sources[source] = sources.get(source, 0) + 1
+            
+            # Create point data with enhanced information
+            point_data = {
                 'x': float(coords_3d[i, 0]),
                 'y': float(coords_3d[i, 1]),
                 'z': float(coords_3d[i, 2]),
-                'text': data['documents'][i][:100] + '...' if len(data['documents'][i]) > 100 else data['documents'][i],
-                'source': data.get('metadatas', [{}])[i].get('source', 'Manual Input') if data.get('metadatas') else 'Manual Input'
-            })
+                'text': data['documents'][i][:200] + '...' if len(data['documents'][i]) > 200 else data['documents'][i],
+                'source': source,
+                'type': doc_type,
+                'id': data['ids'][i],
+                'size': 5,  # Default size
+                'color': get_point_color(doc_type)  # Get color based on document type
+            }
+            points.append(point_data)
         
         # Prepare variance explained (pad with zeros if needed)
         variance_explained = list(pca.explained_variance_ratio_)
         while len(variance_explained) < 3:
             variance_explained.append(0.0)
         
+        # Calculate additional metadata
+        metadata = {
+            "total_points": len(points),
+            "categories": categories,
+            "sources": sources,
+            "dimensions": {
+                "original": n_features,
+                "reduced": n_components,
+                "variance_explained": variance_explained
+            }
+        }
+        
         return jsonify({
             "points": points,
-            "variance_explained": variance_explained
+            "variance_explained": variance_explained,
+            "metadata": metadata
         })
         
     except Exception as e:
@@ -498,8 +574,25 @@ def get_embeddings_visualization():
         return jsonify({
             "error": str(e),
             "points": [],
-            "variance_explained": [0, 0, 0]
+            "variance_explained": [0, 0, 0],
+            "metadata": {
+                "total_points": 0,
+                "categories": {},
+                "sources": {}
+            }
         }), 500
+
+def get_point_color(doc_type):
+    """Get color for different document types"""
+    color_map = {
+        'query': '#FF0000',  # Red for queries
+        'health': '#00FF00',  # Green for health context
+        'work': '#0000FF',   # Blue for work context
+        'commute': '#FFA500', # Orange for commute context
+        'layout': '#800080',  # Purple for layout data
+        'unknown': '#808080'  # Gray for unknown types
+    }
+    return color_map.get(doc_type, color_map['unknown'])
 
 def create_rag_prompt(query, relevant_docs):
     # Check if this is a dashboard layout optimization request
@@ -725,24 +818,38 @@ def submit_firebase_query():
 
 @app.route('/api/latest-firebase-query')
 def latest_firebase_query():
-    """API endpoint to fetch the latest query from Firebase"""
+    """API endpoint to fetch the latest query from Firebase and local storage"""
     try:
+        # First try to get from local storage
+        local_data = get_from_local_db('query')
+        if local_data:
+            return jsonify({"query": local_data})
+        
+        # If not in local storage, get from Firebase
         if db is None:
             return jsonify({"error": "Firebase not initialized"}), 500
         
-        # Get the latest query from Firebase
         queries_ref = db.collection('rag_queries')
         query = queries_ref.order_by('timestamp', direction=firestore.Query.DESCENDING).limit(1).get()
         
         latest_query = None
         for doc in query:
             query_data = doc.to_dict()
-            # Convert timestamp to string for JSON serialization if it exists
             if 'timestamp' in query_data and query_data['timestamp']:
                 query_data['timestamp'] = query_data['timestamp'].strftime('%Y-%m-%d %H:%M:%S')
             query_data['id'] = doc.id
             latest_query = query_data
             break
+        
+        # Save to local storage
+        if latest_query:
+            save_to_local_db('query', latest_query)
+            
+            # Add to embeddings
+            add_to_embeddings(
+                latest_query['query'],
+                {"source": "Firebase Query", "type": "query", "id": latest_query['id']}
+            )
         
         return jsonify({"query": latest_query})
     
@@ -751,36 +858,94 @@ def latest_firebase_query():
         return jsonify({"error": str(e)}), 500
 
 @app.route('/api/latest-health-context')
-def latest_health_context():
-    """API endpoint to fetch the latest health context from Firebase"""
+def get_latest_health_context():
     try:
-        if db is None:
-            return jsonify({"error": "Firebase not initialized"}), 500
-            
-        # Get the latest health context from Firebase
-        health_ref = db.collection('health_context')
-        readings = health_ref.order_by('created_at', direction=firestore.Query.DESCENDING).limit(1).get()
+        # Get all health contexts from Firebase
+        health_ref = db.collection('health_context').order_by('created_at', direction=firestore.Query.DESCENDING)
+        docs = health_ref.get()
         
-        latest_reading = None
-        for doc in readings:
-            health_data = {
-                'bloodSugar': str(doc.get('bloodSugar')),  # ensure string
-                'created_at': doc.get('created_at'),  # already string
-                'exerciseMinutes': str(doc.get('exerciseMinutes')),  # ensure string
-                'mealType': doc.get('mealType'),  # already string
-                'medication': doc.get('medication'),  # already string
-                'notes': doc.get('notes'),  # already string
-                'timestamp': doc.get('timestamp'),  # firestore timestamp
-                'type': doc.get('type')  # already string
-            }
-            latest_reading = health_data
-            break
+        contexts = []
+        for doc in docs:
+            context_data = doc.to_dict()
+            context_data['id'] = doc.id
             
-        return jsonify({"health_context": latest_reading})
-        
+            # Save to local DB
+            save_to_local_db('health_context', context_data)
+            
+            # Add to embeddings only if new
+            context_text = f"Health Context: Blood Sugar {context_data.get('bloodSugar')}, Exercise {context_data.get('exerciseMinutes')} mins, Meal: {context_data.get('mealType')}, Medication: {context_data.get('medication')}, Notes: {context_data.get('notes', '')}"
+            add_to_embeddings(context_text, {
+                "id": doc.id,
+                "type": "Health Context",
+                "source": "Firebase"
+            })
+            
+            contexts.append(context_data)
+            
+        return jsonify({"health_contexts": contexts})
+            
     except Exception as e:
-        print(f"Error fetching health context: {str(e)}")
-        return jsonify({"error": f"Error fetching health context: {str(e)}"}), 500
+        return jsonify({"error": str(e)})
+
+@app.route('/api/latest-work-context')
+def get_latest_work_context():
+    try:
+        # Get all work contexts from Firebase
+        work_ref = db.collection('work_context').order_by('created_at', direction=firestore.Query.DESCENDING)
+        docs = work_ref.get()
+        
+        contexts = []
+        for doc in docs:
+            context_data = doc.to_dict()
+            context_data['id'] = doc.id
+            
+            # Save to local DB
+            save_to_local_db('work_context', context_data)
+            
+            # Add to embeddings only if new
+            context_text = f"Work Context: Task {context_data.get('taskName')}, Status {context_data.get('status')}, Priority {context_data.get('priority')}, Deadline {context_data.get('deadline')}, Team: {context_data.get('collaborators')}"
+            add_to_embeddings(context_text, {
+                "id": doc.id,
+                "type": "Work Context",
+                "source": "Firebase"
+            })
+            
+            contexts.append(context_data)
+            
+        return jsonify({"work_contexts": contexts})
+            
+    except Exception as e:
+        return jsonify({"error": str(e)})
+
+@app.route('/api/latest-commute-context')
+def get_latest_commute_context():
+    try:
+        # Get all commute contexts from Firebase
+        commute_ref = db.collection('commute_context').order_by('created_at', direction=firestore.Query.DESCENDING)
+        docs = commute_ref.get()
+        
+        contexts = []
+        for doc in docs:
+            context_data = doc.to_dict()
+            context_data['id'] = doc.id
+            
+            # Save to local DB
+            save_to_local_db('commute_context', context_data)
+            
+            # Add to embeddings only if new
+            context_text = f"Commute Context: From {context_data.get('startLocation')} to {context_data.get('endLocation')}, Mode: {context_data.get('transportMode')}, Duration: {context_data.get('duration')} mins, Traffic: {context_data.get('trafficCondition')}, Notes: {context_data.get('notes', '')}"
+            add_to_embeddings(context_text, {
+                "id": doc.id,
+                "type": "Commute Context",
+                "source": "Firebase"
+            })
+            
+            contexts.append(context_data)
+            
+        return jsonify({"commute_contexts": contexts})
+            
+    except Exception as e:
+        return jsonify({"error": str(e)})
 
 def generate_layout_response(doc_ref, dashboard_context, raw_response, parsed_json):
     """Helper function to generate formatted layout response and update Firebase"""
@@ -845,273 +1010,70 @@ def process_firebase_query_api():
         if not query_text:
             return jsonify({"error": "No query provided"}), 400
         
-        # Extract query ID and prepare to get dashboard context
-        query_id = request.form.get('query_id')
-        dashboard_context = None
-        
-        # Get dashboard context from Firebase if available
-        if db is not None and query_id:
-            try:
-                doc_ref = db.collection('rag_queries').document(query_id)
-                doc = doc_ref.get()
-                if doc.exists:
-                    query_data = doc.to_dict()
-                    if 'dashboardContext' in query_data:
-                        dashboard_context = query_data['dashboardContext']
-            except Exception as e:
-                print(f"Error fetching Firebase document: {str(e)}")
-        
-        # Direct matching for common layout queries
-        layout_config = None
-        query_lower = query_text.lower()
-        
-        # Standard layout optimization
-        if "optimize" in query_lower and "widescreen" in query_lower:
-            layout_config = {
-                "cols": 4,
-                "rows": 3,
-                "rowHeight": 120,
-                "margin": [15, 15]
-            }
-        # Make cards bigger
-        elif "bigger" in query_lower and ("card" in query_lower or "layout" in query_lower):
-            # For bigger cards, reduce columns, increase row height
-            layout_config = {
-                "cols": 2,  # Smaller number of columns makes cards wider
-                "rows": 4,
-                "rowHeight": 180,  # Taller rows
-                "margin": [15, 15]  # Slightly bigger margins
-            }
-        # Compact layout
-        elif "compact" in query_lower or "smaller" in query_lower:
-            layout_config = {
-                "cols": 6,  # More columns for compact view
-                "rows": 6,
-                "rowHeight": 80,  # Smaller height
-                "margin": [5, 5]  # Smaller margins
-            }
-        # Increase spacing
-        elif "spacing" in query_lower or "space" in query_lower:
-            layout_config = {
-                "cols": 3,  # Fewer columns to allow more space
-                "rows": 3,
-                "rowHeight": 150,
-                "margin": [20, 20]  # Larger margins for more space
-            }
-        # Square grid
-        elif "square" in query_lower:
-            layout_config = {
-                "cols": 3,
-                "rows": 3,  # Same number of rows as columns
-                "rowHeight": 150,
-                "margin": [10, 10]
-            }
-        # Custom grid size match
-        elif "grid" in query_lower or "arrange" in query_lower:
-            import re
-            grid_match = re.search(r'(\d+)x(\d+)', query_lower)
-            
-            if grid_match:
-                try:
-                    cols = int(grid_match.group(1))
-                    rows = int(grid_match.group(2))
-                    # Ensure reasonable bounds
-                    cols = min(max(1, cols), 12)
-                    rows = min(max(1, rows), 20)
-                    
-                    layout_config = {
-                        "cols": cols,
-                        "rows": rows,
-                        "rowHeight": 120,
-                        "margin": [10, 10]
-                    }
-                except:
-                    pass
-        
-        # Category matching
-        category = None
-        if "social" in query_lower or "social media" in query_lower:
-            category = "social"
-        elif "work" in query_lower:
-            category = "work"
-        elif "financial" in query_lower or "finance" in query_lower:
-            category = "financial"
-        elif "entertainment" in query_lower:
-            category = "entertainment"
-        elif "utility" in query_lower:
-            category = "utility"
-        elif "transportation" in query_lower:
-            category = "transportation"
-        elif "news" in query_lower:
-            category = "news"
-        elif "all" in query_lower and "app" in query_lower:
-            category = "all"
-        
-        # If we have a layout config or category, generate a direct response
-        if layout_config or category:
-            from datetime import datetime
-            import json
-            
-            if layout_config:
-                # Format layout config as JSON
-                raw_response = f"""```json
-{json.dumps(layout_config, indent=2)}
-```"""
-                
-                if dashboard_context and db is not None and query_id:
-                    try:
-                        doc_ref = db.collection('rag_queries').document(query_id)
-                        # Format response and update Firebase
-                        response_data = generate_layout_response(
-                            doc_ref, 
-                            dashboard_context, 
-                            raw_response, 
-                            layout_config
-                        )
-                        
-                        # Save the raw response to rag_responses collection
-                        if db is not None:
-                            # Save only the clean JSON object, not the markdown code block
-                            save_response_to_firebase(query_text, json.dumps(layout_config, indent=2), "layout", query_id)
-                        
-                        return response_data
-                    except Exception as e:
-                        print(f"Error processing layout response: {str(e)}")
-            
-            if category and db is not None and query_id:
-                try:
-                    # Create standardized category response format
-                    response_data = {
-                        "success": True,
-                        "answer": f"Processed query: \"{query_text}\" for category: {category}",
-                        "query_embedding_visualization": {
-                            "x": 0.5,  # Default placeholder values
-                            "y": 0.5, 
-                            "z": 0.5
-                        },
-                        "category": category
-                    }
-                    
-                    # Update the Firebase document with consistent format
-                    doc_ref = db.collection('rag_queries').document(query_id)
-                    doc_ref.update({
-                        'answer': response_data,
-                        'processed': True,
-                        'processed_timestamp': firestore.SERVER_TIMESTAMP
-                    })
-                    
-                    # Save the raw response to rag_responses collection
-                    if db is not None:
-                        save_response_to_firebase(query_text, json.dumps(response_data), "category", query_id)
-                    
-                    return jsonify(response_data)
-                except Exception as e:
-                    print(f"Error processing category response: {str(e)}")
-        
-        # If not a standard query, process using the regular RAG flow
-        # Add dashboard context temporarily to ChromaDB if available
-        temp_id = None
-        if dashboard_context:
-            try:
-                import json
-                dashboard_text = f"""Dashboard Configuration:
-                cols: {dashboard_context.get('originalConfig', {}).get('cols', 2)}
-                rows: {dashboard_context.get('originalConfig', {}).get('rows', 2)}
-                rowHeight: {dashboard_context.get('originalConfig', {}).get('rowHeight', 200)}
-                margin: {dashboard_context.get('originalConfig', {}).get('margin', [10, 10])}
-                numApps: {dashboard_context.get('originalConfig', {}).get('numApps', 4)}
-                activeCategory: {dashboard_context.get('originalConfig', {}).get('activeCategory', 'default')}
-                
-                Raw config: {json.dumps(dashboard_context.get('originalConfig', {}))}
-                """
-                
-                # Add to ChromaDB temporarily for this query
-                embedding = model.encode(dashboard_text).tolist()
-                temp_id = f"temp_dashboard_{query_id}"
-                
-                # Check if we already have this temp document
-                try:
-                    collection.get(ids=[temp_id])
-                    # If it exists, delete it first
-                    collection.delete(ids=[temp_id])
-                except:
-                    pass
-                    
-                # Add the temporary dashboard context
-                collection.add(
-                    embeddings=[embedding],
-                    documents=[dashboard_text],
-                    ids=[temp_id],
-                    metadatas=[{"source": "Firebase Dashboard Context", "temp": True}]
-                )
-                print(f"Added temporary dashboard context document with ID: {temp_id}")
-            except Exception as e:
-                print(f"Error adding dashboard context to ChromaDB: {str(e)}")
-        
         # Process the query using standard RAG
         result = process_search_query(query_text)
         
-        # Clean up temporary collection entry if it exists
-        if temp_id:
-            try:
-                collection.delete(ids=[temp_id])
-                print(f"Deleted temporary dashboard context document with ID: {temp_id}")
-            except Exception as e:
-                print(f"Error deleting temporary dashboard context: {str(e)}")
-        
-        # Check for layout patterns in the result and format accordingly
-        if "```json" in result['answer'] and ("cols" in result['answer'] or "rows" in result['answer']):
-            # This is likely a layout response, process it as such
-            try:
-                # Extract JSON content from the code block
-                import json
-                import re
-                
-                # Extract the JSON content from the markdown code block
-                json_match = re.search(r'```json\s*\n(.*?)\n\s*```', result['answer'], re.DOTALL)
-                if json_match:
-                    json_content = json_match.group(1).strip()
-                    parsed_json = json.loads(json_content)
-                    
-                    # Update Firebase with proper layout format
-                    if db is not None and query_id and dashboard_context:
-                        doc_ref = db.collection('rag_queries').document(query_id)
-                        response_data = generate_layout_response(
-                            doc_ref,
-                            dashboard_context,
-                            result['answer'],
-                            parsed_json
-                        )
-                        
-                        # Save the raw response to rag_responses collection
-                        if db is not None:
-                            # Save only the clean JSON object, not the markdown code block
-                            save_response_to_firebase(query_text, json_content, "layout", query_id)
-                        
-                        return response_data
-            except Exception as e:
-                print(f"Error parsing layout JSON from RAG response: {str(e)}")
-        
-        # Update Firebase with the result (standard format if not layout or category)
+        # Save the result to Firebase if available
+        query_id = request.form.get('query_id')
         if db is not None and query_id:
             try:
+                # Save the query result
                 doc_ref = db.collection('rag_queries').document(query_id)
-                doc_ref.update({
-                    'answer': result,
+                doc_ref.set({
+                    'query': query_text,
+                    'answer': result['answer'],
                     'processed': True,
-                    'processed_timestamp': firestore.SERVER_TIMESTAMP
-                })
+                    'processed_timestamp': firestore.SERVER_TIMESTAMP,
+                    'matching_contexts': result.get('matching_contexts', [])
+                }, merge=True)
                 
-                # Save the raw response to rag_responses collection
-                if db is not None:
-                    save_response_to_firebase(query_text, json.dumps(result), "standard", query_id)
+                # Save individual context responses
+                health_context_id = request.form.get('health_context_id')
+                work_context_id = request.form.get('work_context_id')
+                commute_context_id = request.form.get('commute_context_id')
+                
+                # Filter matching contexts by type
+                health_contexts = [ctx for ctx in result.get('matching_contexts', []) if ctx['type'] == 'health']
+                work_contexts = [ctx for ctx in result.get('matching_contexts', []) if ctx['type'] == 'work']
+                commute_contexts = [ctx for ctx in result.get('matching_contexts', []) if ctx['type'] == 'commute']
+                
+                # Save health context response
+                if health_context_id and health_contexts:
+                    db.collection('health_responses').add({
+                        'query_id': query_id,
+                        'health_context_id': health_context_id,
+                        'contexts': health_contexts,
+                        'created_at': firestore.SERVER_TIMESTAMP
+                    })
+                
+                # Save work context response
+                if work_context_id and work_contexts:
+                    db.collection('work_responses').add({
+                        'query_id': query_id,
+                        'work_context_id': work_context_id,
+                        'contexts': work_contexts,
+                        'created_at': firestore.SERVER_TIMESTAMP
+                    })
+                
+                # Save commute context response
+                if commute_context_id and commute_contexts:
+                    db.collection('commute_responses').add({
+                        'query_id': query_id,
+                        'commute_context_id': commute_context_id,
+                        'contexts': commute_contexts,
+                        'created_at': firestore.SERVER_TIMESTAMP
+                    })
+                
+                # Add query_id to the result
+                result['query_id'] = query_id
+                
             except Exception as e:
-                print(f"Error updating Firebase: {str(e)}")
+                print(f"Error saving to Firebase: {str(e)}")
         
         return jsonify(result)
-    
+        
     except Exception as e:
-        print(f"Error processing Firebase query: {str(e)}")
+        print(f"Error processing query: {str(e)}")
         return jsonify({"error": str(e)}), 500
 
 def save_response_to_firebase(query, raw_response, response_type, original_query_id=None):
@@ -1145,7 +1107,6 @@ def save_response_to_firebase(query, raw_response, response_type, original_query
 def save_recommendations():
     """Save AI-generated recommendations to Firebase"""
     if db is None:
-        print("Firebase not initialized, cannot save recommendations")
         return jsonify({"error": "Firebase not initialized"}), 500
     
     try:
@@ -1179,49 +1140,14 @@ def save_recommendations():
             "message": "Recommendations saved successfully",
             "recommendation_id": doc_ref[1].id
         })
-        
     except Exception as e:
         print(f"Error saving recommendations: {str(e)}")
         return jsonify({"error": f"Error saving recommendations: {str(e)}"}), 500
-
-@app.route('/api/latest-work-context')
-def latest_work_context():
-    """API endpoint to fetch the latest work context from Firebase"""
-    try:
-        if db is None:
-            return jsonify({"error": "Firebase not initialized"}), 500
-            
-        # Get the latest work context from Firebase
-        work_ref = db.collection('work_context')
-        tasks = work_ref.order_by('created_at', direction=firestore.Query.DESCENDING).limit(1).get()
-        
-        latest_task = None
-        for doc in tasks:
-            work_data = {
-                'collaborators': doc.get('collaborators'),
-                'created_at': doc.get('created_at'),
-                'deadline': doc.get('deadline'),
-                'notes': doc.get('notes'),
-                'priority': doc.get('priority'),
-                'status': doc.get('status'),
-                'taskName': doc.get('taskName'),
-                'timestamp': doc.get('timestamp'),
-                'type': doc.get('type')
-            }
-            latest_task = work_data
-            break
-            
-        return jsonify({"work_context": latest_task})
-        
-    except Exception as e:
-        print(f"Error fetching work context: {str(e)}")
-        return jsonify({"error": f"Error fetching work context: {str(e)}"}), 500
 
 @app.route('/api/save-work-recommendations', methods=['POST'])
 def save_work_recommendations():
     """Save AI-generated work recommendations to Firebase"""
     if db is None:
-        print("Firebase not initialized, cannot save work recommendations")
         return jsonify({"error": "Firebase not initialized"}), 500
     
     try:
@@ -1256,49 +1182,14 @@ def save_work_recommendations():
             "message": "Work recommendations saved successfully",
             "recommendation_id": doc_ref[1].id
         })
-        
     except Exception as e:
         print(f"Error saving work recommendations: {str(e)}")
         return jsonify({"error": f"Error saving work recommendations: {str(e)}"}), 500
-
-@app.route('/api/latest-commute-context')
-def latest_commute_context():
-    """API endpoint to fetch the latest commute context from Firebase"""
-    try:
-        if db is None:
-            return jsonify({"error": "Firebase not initialized"}), 500
-            
-        # Get the latest commute context from Firebase
-        commute_ref = db.collection('commute_context')
-        commutes = commute_ref.order_by('created_at', direction=firestore.Query.DESCENDING).limit(1).get()
-        
-        latest_commute = None
-        for doc in commutes:
-            commute_data = {
-                'created_at': doc.get('created_at'),
-                'duration': doc.get('duration'),
-                'endLocation': doc.get('endLocation'),
-                'notes': doc.get('notes'),
-                'startLocation': doc.get('startLocation'),
-                'timestamp': doc.get('timestamp'),
-                'trafficCondition': doc.get('trafficCondition'),
-                'transportMode': doc.get('transportMode'),
-                'type': doc.get('type')
-            }
-            latest_commute = commute_data
-            break
-            
-        return jsonify({"commute_context": latest_commute})
-        
-    except Exception as e:
-        print(f"Error fetching commute context: {str(e)}")
-        return jsonify({"error": f"Error fetching commute context: {str(e)}"}), 500
 
 @app.route('/api/save-commute-recommendations', methods=['POST'])
 def save_commute_recommendations():
     """Save AI-generated commute recommendations to Firebase"""
     if db is None:
-        print("Firebase not initialized, cannot save commute recommendations")
         return jsonify({"error": "Firebase not initialized"}), 500
     
     try:
@@ -1333,10 +1224,176 @@ def save_commute_recommendations():
             "message": "Commute recommendations saved successfully",
             "recommendation_id": doc_ref[1].id
         })
-        
     except Exception as e:
         print(f"Error saving commute recommendations: {str(e)}")
         return jsonify({"error": f"Error saving commute recommendations: {str(e)}"}), 500
+
+# Initialize SQLite database
+def init_db():
+    conn = sqlite3.connect('local_data.db')
+    c = conn.cursor()
+    
+    # Create tables for different types of data
+    c.execute('''CREATE TABLE IF NOT EXISTS queries
+                 (id TEXT PRIMARY KEY, query TEXT, timestamp TEXT, 
+                  source TEXT, processed BOOLEAN, answer TEXT)''')
+    
+    c.execute('''CREATE TABLE IF NOT EXISTS health_context
+                 (id TEXT PRIMARY KEY, blood_sugar TEXT, created_at TEXT,
+                  exercise_minutes TEXT, meal_type TEXT, medication TEXT,
+                  notes TEXT, timestamp TEXT, type TEXT)''')
+    
+    c.execute('''CREATE TABLE IF NOT EXISTS work_context
+                 (id TEXT PRIMARY KEY, task_name TEXT, status TEXT,
+                  priority TEXT, collaborators TEXT, deadline TEXT,
+                  notes TEXT, timestamp TEXT, type TEXT, created_at TEXT)''')
+    
+    c.execute('''CREATE TABLE IF NOT EXISTS commute_context
+                 (id TEXT PRIMARY KEY, duration TEXT, end_location TEXT,
+                  notes TEXT, start_location TEXT, timestamp TEXT,
+                  traffic_condition TEXT, transport_mode TEXT, type TEXT,
+                  created_at TEXT)''')
+    
+    conn.commit()
+    conn.close()
+
+# Initialize the database when the app starts
+init_db()
+
+def save_to_local_db(data_type, data):
+    """Save data to local SQLite database"""
+    conn = sqlite3.connect('local_data.db')
+    c = conn.cursor()
+    
+    try:
+        # Convert Firebase timestamps to strings
+        if isinstance(data.get('timestamp'), datetime.datetime):
+            data['timestamp'] = data['timestamp'].strftime('%Y-%m-%d %H:%M:%S')
+        if isinstance(data.get('created_at'), datetime.datetime):
+            data['created_at'] = data['created_at'].strftime('%Y-%m-%d %H:%M:%S')
+            
+        if data_type == 'query':
+            c.execute('''INSERT OR REPLACE INTO queries 
+                        (id, query, timestamp, source, processed, answer)
+                        VALUES (?, ?, ?, ?, ?, ?)''',
+                     (str(data.get('id')), str(data.get('query')), str(data.get('timestamp')),
+                      str(data.get('source')), bool(data.get('processed', False)),
+                      json.dumps(data.get('answer', {}))))
+        
+        elif data_type == 'health_context':
+            c.execute('''INSERT OR REPLACE INTO health_context 
+                        (id, blood_sugar, created_at, exercise_minutes,
+                         meal_type, medication, notes, timestamp, type)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+                     (str(data.get('id')), str(data.get('bloodSugar')), str(data.get('created_at')),
+                      str(data.get('exerciseMinutes')), str(data.get('mealType')),
+                      str(data.get('medication')), str(data.get('notes', '')), str(data.get('timestamp')),
+                      str(data.get('type'))))
+        
+        elif data_type == 'work_context':
+            c.execute('''INSERT OR REPLACE INTO work_context 
+                        (id, task_name, status, priority, collaborators,
+                         deadline, notes, timestamp, type, created_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+                     (str(data.get('id')), str(data.get('taskName')), str(data.get('status')),
+                      str(data.get('priority')), str(data.get('collaborators')),
+                      str(data.get('deadline')), str(data.get('notes', '')), str(data.get('timestamp')),
+                      str(data.get('type')), str(data.get('created_at'))))
+        
+        elif data_type == 'commute_context':
+            c.execute('''INSERT OR REPLACE INTO commute_context 
+                        (id, duration, end_location, notes, start_location,
+                         timestamp, traffic_condition, transport_mode, type, created_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+                     (str(data.get('id')), str(data.get('duration')), str(data.get('endLocation')),
+                      str(data.get('notes', '')), str(data.get('startLocation')), str(data.get('timestamp')),
+                      str(data.get('trafficCondition')), str(data.get('transportMode')),
+                      str(data.get('type')), str(data.get('created_at'))))
+        
+        conn.commit()
+    except Exception as e:
+        print(f"Error saving to local database: {str(e)}")
+    finally:
+        conn.close()
+
+def get_from_local_db(data_type, limit=1):
+    """Retrieve data from local SQLite database"""
+    conn = sqlite3.connect('local_data.db')
+    c = conn.cursor()
+    
+    try:
+        if data_type == 'query':
+            c.execute('SELECT * FROM queries ORDER BY timestamp DESC LIMIT ?', (limit,))
+        elif data_type == 'health_context':
+            c.execute('SELECT * FROM health_context ORDER BY created_at DESC LIMIT ?', (limit,))
+        elif data_type == 'work_context':
+            c.execute('SELECT * FROM work_context ORDER BY created_at DESC LIMIT ?', (limit,))
+        elif data_type == 'commute_context':
+            c.execute('SELECT * FROM commute_context ORDER BY created_at DESC LIMIT ?', (limit,))
+        
+        rows = c.fetchall()
+        if not rows:
+            return None
+        
+        # Convert row to dictionary
+        columns = [description[0] for description in c.description]
+        data = dict(zip(columns, rows[0]))
+        
+        # Convert JSON strings back to objects
+        if data_type == 'query' and data.get('answer'):
+            data['answer'] = json.loads(data['answer'])
+        
+        return data
+    except Exception as e:
+        print(f"Error retrieving from local database: {str(e)}")
+        return None
+    finally:
+        conn.close()
+
+def check_existing_embedding(metadata):
+    """Check if an embedding with the same metadata already exists"""
+    try:
+        # Get all documents and check metadata manually since ChromaDB where clause is limited
+        results = collection.get(include=["metadatas"])
+        if not results or 'metadatas' not in results:
+            return False
+            
+        # Check each metadata for matching id and type
+        for meta in results['metadatas']:
+            if (meta.get('id') == metadata.get('id') and 
+                meta.get('type') == metadata.get('type')):
+                return True
+        return False
+    except Exception as e:
+        print(f"Error checking existing embedding: {str(e)}")
+        return False
+
+def add_to_embeddings(text, metadata):
+    """Add text to ChromaDB embeddings if it doesn't already exist"""
+    try:
+        # Check if embedding already exists
+        if check_existing_embedding(metadata):
+            print(f"Embedding already exists for {metadata.get('type')} with ID {metadata.get('id')}")
+            return False
+            
+        # Generate embedding
+        embedding = model.encode(text).tolist()
+        
+        # Generate a unique document ID based on metadata
+        doc_id = f"{metadata.get('type', 'doc')}_{metadata.get('id', 'unknown')}".replace(' ', '_').lower()
+        
+        # Add to ChromaDB
+        collection.add(
+            embeddings=[embedding],
+            documents=[text],
+            ids=[doc_id],
+            metadatas=[metadata]
+        )
+        print(f"Added new embedding for {metadata.get('type')} with ID {metadata.get('id')}")
+        return True
+    except Exception as e:
+        print(f"Error adding to embeddings: {str(e)}")
+        return False
 
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=5000) 

@@ -3,172 +3,332 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Flask App</title>
+    <title>UbumuntuBrain - AI Assistant</title>
     <style>
+        :root {
+            --primary-color: #10a37f;
+            --background-color: #343541;
+            --chat-background: #444654;
+            --text-color: #fff;
+            --input-background: #40414f;
+            --border-color: #565869;
+        }
+
         body {
-            font-family: Arial, sans-serif;
+            font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+            margin: 0;
+            padding: 0;
+            background-color: var(--background-color);
+            color: var(--text-color);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .header {
+            background-color: var(--background-color);
+            padding: 1rem;
+            text-align: center;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .header h1 {
+            margin: 0;
+            font-size: 1.5rem;
+            color: var(--text-color);
+        }
+
+        .chat-container {
+            flex: 1;
             max-width: 800px;
             margin: 0 auto;
-            padding: 20px;
-        }
-        .form-container {
-            margin-top: 20px;
-        }
-        .form-group {
-            margin-bottom: 20px;
-        }
-        input[type="text"] {
+            padding: 2rem 1rem;
             width: 100%;
-            padding: 10px;
-            margin: 10px 0;
-            border: 1px solid #ddd;
-            border-radius: 4px;
+            box-sizing: border-box;
         }
-        .file-input {
-            margin: 10px 0;
-        }
-        .gps-inputs {
+
+        .chat-messages {
+            margin-bottom: 2rem;
             display: flex;
-            gap: 10px;
+            flex-direction: column;
+            gap: 1rem;
         }
-        .gps-inputs input {
-            flex: 1;
+
+        .message {
+            padding: 1.5rem;
+            border-radius: 0.5rem;
+            line-height: 1.6;
+            font-size: 1rem;
+            animation: fadeIn 0.3s ease-in;
         }
-        button {
-            padding: 10px 20px;
-            background-color: #007bff;
+
+        .user-message {
+            background-color: var(--background-color);
+        }
+
+        .assistant-message {
+            background-color: var(--chat-background);
+        }
+
+        .input-container {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            padding: 1rem;
+            background-color: var(--background-color);
+            border-top: 1px solid var(--border-color);
+        }
+
+        .input-wrapper {
+            max-width: 800px;
+            margin: 0 auto;
+            position: relative;
+        }
+
+        .search-input {
+            width: 100%;
+            padding: 1rem 3rem 1rem 1rem;
+            border: 1px solid var(--border-color);
+            border-radius: 0.5rem;
+            background-color: var(--input-background);
+            color: var(--text-color);
+            font-size: 1rem;
+            resize: none;
+            box-sizing: border-box;
+            min-height: 60px;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+
+        .search-input:focus {
+            outline: none;
+            border-color: var(--primary-color);
+        }
+
+        .send-button {
+            position: absolute;
+            right: 1rem;
+            bottom: 1rem;
+            background-color: var(--primary-color);
             color: white;
             border: none;
-            border-radius: 4px;
+            border-radius: 0.4rem;
+            padding: 0.5rem 1rem;
             cursor: pointer;
+            transition: background-color 0.2s;
         }
-        button:hover {
-            background-color: #0056b3;
+
+        .send-button:hover {
+            background-color: #0e8c6d;
         }
-        .preview-image {
-            max-width: 200px;
-            margin-top: 10px;
-            display: none;
+
+        .loading {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.5rem;
+            padding: 1rem;
+            color: var(--text-color);
         }
-        .results-section {
-            margin-top: 30px;
-            padding: 20px;
-            border: 1px solid #ddd;
-            border-radius: 4px;
-            display: none;
+
+        .spinner {
+            width: 16px;
+            height: 16px;
+            border: 2px solid #ffffff3d;
+            border-top: 2px solid var(--text-color);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
         }
-        .results-section h2 {
-            margin-top: 0;
-            color: #333;
+
+        .context-item {
+            border: 1px solid var(--border-color);
+            background-color: var(--input-background);
+            padding: 1rem;
+            margin-top: 1rem;
+            border-radius: 0.5rem;
         }
-        .result-item {
-            margin: 10px 0;
-            padding: 10px;
-            background-color: #f8f9fa;
-            border-radius: 4px;
+
+        .context-item .type {
+            color: var(--primary-color);
+            font-weight: bold;
+            margin-bottom: 0.5rem;
         }
-        .result-item img {
-            max-width: 150px;
-            margin-top: 5px;
+
+        .context-item .relevance {
+            color: #888;
+            font-size: 0.9rem;
+            margin-bottom: 0.5rem;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
         }
     </style>
 </head>
 <body>
-    <h1>Welcome to Flask!</h1>
-    <div class="form-container">
-        <form method="POST" action="/" enctype="multipart/form-data">
-            <div class="form-group">
-                <label for="query">Enter your query:</label>
-                <input type="text" id="query" name="query" placeholder="Type your query here...">
-            </div>
+    <header class="header">
+        <h1>UbumuntuBrain AI Assistant</h1>
+    </header>
 
-            <div class="form-group">
-                <label for="picture">Upload Picture:</label>
-                <input type="file" id="picture" name="picture" accept="image/*" class="file-input">
-                <img id="picture-preview" class="preview-image">
+    <main class="chat-container">
+        <div id="chatMessages" class="chat-messages">
+            <div class="message assistant-message">
+                Hello! I'm your AI assistant. How can I help you today?
             </div>
+        </div>
+    </main>
 
-            <div class="form-group">
-                <label for="document">Upload Document:</label>
-                <input type="file" id="document" name="document" accept=".pdf,.doc,.docx,.txt" class="file-input">
-            </div>
-
-            <div class="form-group">
-                <label>GPS Location:</label>
-                <div class="gps-inputs">
-                    <input type="number" name="latitude" placeholder="Latitude" step="any">
-                    <input type="number" name="longitude" placeholder="Longitude" step="any">
-                </div>
-            </div>
-
-            <button type="submit">Submit</button>
-        </form>
+    <div class="input-container">
+        <div class="input-wrapper">
+            <textarea 
+                id="searchInput" 
+                class="search-input" 
+                placeholder="Type your message here..."
+                rows="1"
+                onInput="this.style.height = 'auto'; this.style.height = this.scrollHeight + 'px'"
+            ></textarea>
+            <button onclick="handleSearch()" class="send-button">Send</button>
+        </div>
     </div>
-
-    {% if results %}
-    <div class="results-section" style="display: block;">
-        <h2>Search Results</h2>
-        
-        {% if results.similar_queries %}
-        <div class="form-group">
-            <h3>Similar Queries</h3>
-            {% for doc in results.similar_queries.documents[0] %}
-            <div class="result-item">
-                {{ doc }}
-            </div>
-            {% endfor %}
-        </div>
-        {% endif %}
-
-        {% if results.similar_images %}
-        <div class="form-group">
-            <h3>Similar Images</h3>
-            {% for doc in results.similar_images.documents[0] %}
-            <div class="result-item">
-                <img src="{{ doc }}" alt="Similar image">
-            </div>
-            {% endfor %}
-        </div>
-        {% endif %}
-
-        {% if results.similar_documents %}
-        <div class="form-group">
-            <h3>Similar Documents</h3>
-            {% for doc in results.similar_documents.documents[0] %}
-            <div class="result-item">
-                {{ doc }}
-            </div>
-            {% endfor %}
-        </div>
-        {% endif %}
-
-        {% if results.similar_locations %}
-        <div class="form-group">
-            <h3>Similar Locations</h3>
-            {% for doc in results.similar_locations.documents[0] %}
-            <div class="result-item">
-                {{ doc }}
-            </div>
-            {% endfor %}
-        </div>
-        {% endif %}
-    </div>
-    {% endif %}
 
     <script>
-        // Preview image before upload
-        document.getElementById('picture').addEventListener('change', function(e) {
-            const preview = document.getElementById('picture-preview');
-            const file = e.target.files[0];
-            if (file) {
-                const reader = new FileReader();
-                reader.onload = function(e) {
-                    preview.src = e.target.result;
-                    preview.style.display = 'block';
-                }
-                reader.readAsDataURL(file);
+        // Auto-resize textarea
+        const textarea = document.getElementById('searchInput');
+        textarea.addEventListener('input', function() {
+            this.style.height = 'auto';
+            this.style.height = this.scrollHeight + 'px';
+        });
+
+        // Handle Enter key (Send on Enter, new line on Shift+Enter)
+        textarea.addEventListener('keydown', function(e) {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                handleSearch();
             }
         });
+
+        async function handleSearch() {
+            const searchInput = document.getElementById('searchInput');
+            const query = searchInput.value.trim();
+            if (!query) return;
+
+            // Clear input and reset height
+            searchInput.value = '';
+            searchInput.style.height = 'auto';
+
+            // Add user message to chat
+            addMessage(query, 'user');
+
+            try {
+                // Show loading message
+                const loadingId = addLoadingMessage();
+
+                // Get all available contexts in parallel
+                const [healthResponse, workResponse, commuteResponse] = await Promise.all([
+                    fetch('/api/latest-health-context'),
+                    fetch('/api/latest-work-context'),
+                    fetch('/api/latest-commute-context')
+                ]);
+                
+                const [healthData, workData, commuteData] = await Promise.all([
+                    healthResponse.json(),
+                    workResponse.json(),
+                    commuteResponse.json()
+                ]);
+
+                // Create FormData with query and contexts
+                const formData = new FormData();
+                formData.append('query', query);
+                
+                // Only append context IDs if they exist
+                if (healthData.health_contexts?.[0]?.id) {
+                    formData.append('health_context_id', healthData.health_contexts[0].id);
+                }
+                if (workData.work_contexts?.[0]?.id) {
+                    formData.append('work_context_id', workData.work_contexts[0].id);
+                }
+                if (commuteData.commute_contexts?.[0]?.id) {
+                    formData.append('commute_context_id', commuteData.commute_contexts[0].id);
+                }
+
+                // Process the query
+                const response = await fetch('/api/process-firebase-query', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+
+                const data = await response.json();
+                
+                // Remove loading message
+                removeLoadingMessage(loadingId);
+
+                // Display results
+                if (data.error) {
+                    throw new Error(data.error);
+                }
+
+                let messageContent = data.answer;
+
+                // Add matching contexts if available
+                if (data.matching_contexts?.length > 0) {
+                    messageContent += '<div class="matching-contexts">';
+                    messageContent += '<h4>Related Contexts:</h4>';
+                    messageContent += data.matching_contexts.map(context => `
+                        <div class="context-item">
+                            <div class="type">${context.type}</div>
+                            <div class="relevance">Relevance: ${(context.relevance * 100).toFixed(1)}%</div>
+                            <div class="text">${context.text}</div>
+                        </div>
+                    `).join('');
+                    messageContent += '</div>';
+                }
+
+                addMessage(messageContent, 'assistant');
+
+            } catch (error) {
+                console.error('Error:', error);
+                addMessage(`Error: ${error.message}`, 'assistant');
+            }
+        }
+
+        function addMessage(content, type) {
+            const chatMessages = document.getElementById('chatMessages');
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message ${type}-message`;
+            messageDiv.innerHTML = content;
+            chatMessages.appendChild(messageDiv);
+            messageDiv.scrollIntoView({ behavior: 'smooth' });
+        }
+
+        function addLoadingMessage() {
+            const chatMessages = document.getElementById('chatMessages');
+            const loadingDiv = document.createElement('div');
+            const id = Date.now();
+            loadingDiv.id = `loading-${id}`;
+            loadingDiv.className = 'message assistant-message loading';
+            loadingDiv.innerHTML = '<div class="spinner"></div>Thinking...';
+            chatMessages.appendChild(loadingDiv);
+            loadingDiv.scrollIntoView({ behavior: 'smooth' });
+            return id;
+        }
+
+        function removeLoadingMessage(id) {
+            const loadingDiv = document.getElementById(`loading-${id}`);
+            if (loadingDiv) {
+                loadingDiv.remove();
+            }
+        }
     </script>
 </body>
 </html> 

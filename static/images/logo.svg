@@ -1,0 +1,11 @@
+<svg width="200" height="200" viewBox="0 0 200 200" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <circle cx="100" cy="100" r="90" fill="#0077CC" opacity="0.1"/>
+  <circle cx="100" cy="100" r="70" stroke="#0077CC" stroke-width="3"/>
+  <path d="M70 80 C 70 65, 130 65, 130 80" stroke="#0077CC" stroke-width="3" fill="none"/>
+  <path d="M70 120 C 70 135, 130 135, 130 120" stroke="#0077CC" stroke-width="3" fill="none"/>
+  <line x1="70" y1="80" x2="70" y2="120" stroke="#0077CC" stroke-width="3"/>
+  <line x1="130" y1="80" x2="130" y2="120" stroke="#0077CC" stroke-width="3"/>
+  <circle cx="86" cy="100" r="10" fill="#0077CC"/>
+  <circle cx="114" cy="100" r="10" fill="#0077CC"/>
+  <text x="100" y="160" text-anchor="middle" font-family="Arial" font-weight="bold" font-size="14" fill="#0077CC">UbumuntuBrain</text>
+</svg> 

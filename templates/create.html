@@ -1015,6 +1015,46 @@
             margin-bottom: 15px;
             color: #333;
         }
+
+        .action-buttons {
+            display: flex;
+            gap: 1rem;
+            margin-top: 1rem;
+        }
+
+        .btn {
+            padding: 0.5rem 1rem;
+            border-radius: 4px;
+            cursor: pointer;
+            font-weight: 500;
+            transition: all 0.3s ease;
+        }
+
+        .btn-primary {
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+        }
+
+        .btn-primary:hover {
+            background-color: #45a049;
+        }
+
+        .btn-secondary {
+            background-color: #f44336;
+            color: white;
+            border: none;
+        }
+
+        .btn-secondary:hover {
+            background-color: #da190b;
+        }
+
+        .text-success { color: #28a745; }
+        .text-danger { color: #dc3545; }
+        .text-info { color: #17a2b8; }
+        #send-status { margin-top: 1rem; }
+        #send-status p { margin: 0; padding: 0.5rem; border-radius: 4px; }
     </style>
 </head>
 <body>
@@ -1096,7 +1136,7 @@
                     <div class="loading">
                         <div class="spinner"></div>
                         <span>Loading work context from Firebase...</span>
-            </div>
+                    </div>
                 </div>
                 <div id="work-context-container"></div>
             </div>
@@ -1234,98 +1274,93 @@
                         // Create a trace for each category
                         categories.forEach(category => {
                             const categoryPoints = data.points.filter(p => p.type === category);
+                            const isRecommendation = category.includes('recommendation');
+                            
                             traces.push({
-                                name: category,
+                                name: formatCategoryName(category),
                                 x: categoryPoints.map(p => p.x),
                                 y: categoryPoints.map(p => p.y),
                                 z: categoryPoints.map(p => p.z),
-                    mode: 'markers',
+                                mode: 'markers',
                                 type: 'scatter3d',
-                    marker: {
-                                    size: 6,
-                        opacity: 0.8,
-                        line: {
+                                marker: {
+                                    size: isRecommendation ? 8 : 6,
+                                    color: categoryPoints[0].color,
+                                    opacity: isRecommendation ? 0.9 : 0.7,
+                                    symbol: isRecommendation ? 'diamond' : 'circle',
+                                    line: {
                                         color: '#000000',
                                         width: 0.5
                                     }
                                 },
-                                text: categoryPoints.map(p => `
-                                    <b>Type:</b> ${p.type}<br>
-                                    <b>Source:</b> ${p.source}<br>
-                                    <b>Content:</b> ${p.text}
-                                `),
+                                text: categoryPoints.map(p => formatHoverText(p)),
                                 hoverinfo: 'text'
                             });
                         });
 
-                const layout = {
+                        const layout = {
                             title: '3D Embeddings Visualization',
-                    scene: {
-                        xaxis: {
+                            scene: {
+                                xaxis: {
                                     title: 'PC1',
                                     showgrid: true,
                                     zeroline: true,
                                     gridcolor: '#ddd'
-                        },
-                        yaxis: {
+                                },
+                                yaxis: {
                                     title: 'PC2',
                                     showgrid: true,
                                     zeroline: true,
                                     gridcolor: '#ddd'
-                        },
-                        zaxis: {
+                                },
+                                zaxis: {
                                     title: 'PC3',
                                     showgrid: true,
                                     zeroline: true,
                                     gridcolor: '#ddd'
-                        },
-                        camera: {
+                                },
+                                camera: {
                                     eye: {
                                         x: 1.5,
                                         y: 1.5,
                                         z: 1.5
                                     }
                                 }
-                    },
-                    margin: {
-                        l: 0,
-                        r: 0,
-                        t: 30,
+                            },
+                            margin: {
+                                l: 0,
+                                r: 0,
+                                t: 30,
                                 b: 0
-                    },
-                    showlegend: true,
-                    legend: {
+                            },
+                            showlegend: true,
+                            legend: {
                                 x: 1.1,
                                 y: 0.9,
                                 bgcolor: 'rgba(255, 255, 255, 0.8)'
                             }
-                };
+                        };
 
-                const config = {
-                    responsive: true,
-                    displayModeBar: true,
-                    displaylogo: false,
+                        const config = {
+                            responsive: true,
+                            displayModeBar: true,
+                            displaylogo: false,
                             modeBarButtonsToRemove: ['lasso2d', 'select2d'],
                             modeBarButtonsToAdd: [{
-                            name: 'Reset Camera',
+                                name: 'Reset Camera',
                                 icon: Plotly.Icons.camera,
-                            click: function(gd) {
-                                Plotly.relayout(gd, {
+                                click: function(gd) {
+                                    Plotly.relayout(gd, {
                                         'scene.camera': layout.scene.camera
                                     });
                                 }
                             }]
                         };
 
-                Plotly.newPlot('embedding-plot', traces, layout, config);
+                        Plotly.newPlot('embedding-plot', traces, layout, config);
 
                         // Update metadata display
-                        if (data.metadata) {
-                            document.getElementById('variance-info').textContent = 
-                                `${(data.metadata.dimensions.variance_explained[0] * 100).toFixed(1)}% (PC1), ` +
-                                `${(data.metadata.dimensions.variance_explained[1] * 100).toFixed(1)}% (PC2), ` +
-                                `${(data.metadata.dimensions.variance_explained[2] * 100).toFixed(1)}% (PC3)`;
-                        }
+                        updateVisualizationMetadata(data.metadata);
                     } else {
                         container.innerHTML = '<p>No data points available for visualization.</p>';
                     }
@@ -1335,6 +1370,66 @@
                     document.getElementById('embedding-plot').innerHTML = 
                         '<p>Error loading visualization data.</p>';
                 });
+        }
+
+        // Helper function to format category names for display
+        function formatCategoryName(category) {
+            if (!category) return 'Unknown';
+            
+            // Split by underscore and capitalize each word
+            const words = category.split('_');
+            const formatted = words.map(word => 
+                word.charAt(0).toUpperCase() + word.slice(1)
+            ).join(' ');
+            
+            // Add "AI" prefix for recommendations
+            if (category.includes('recommendation')) {
+                return `AI ${formatted}`;
+            }
+            return formatted;
+        }
+
+        // Helper function to format hover text
+        function formatHoverText(point) {
+            let text = `<b>Type:</b> ${formatCategoryName(point.type)}<br>`;
+            text += `<b>Source:</b> ${point.source}<br>`;
+            
+            // For recommendations, format the content differently
+            if (point.type.includes('recommendation')) {
+                const contentLines = point.text.split(',').map(line => line.trim());
+                text += '<b>Details:</b><br>' + contentLines.join('<br>');
+            } else {
+                text += `<b>Content:</b> ${point.text}`;
+            }
+            
+            return text;
+        }
+
+        // Function to update visualization metadata display
+        function updateVisualizationMetadata(metadata) {
+            if (!metadata) return;
+
+            const varianceInfo = document.getElementById('variance-info');
+            if (varianceInfo) {
+                varianceInfo.innerHTML = `
+                    ${(metadata.dimensions.variance_explained[0] * 100).toFixed(1)}% (PC1), 
+                    ${(metadata.dimensions.variance_explained[1] * 100).toFixed(1)}% (PC2), 
+                    ${(metadata.dimensions.variance_explained[2] * 100).toFixed(1)}% (PC3)
+                `;
+            }
+
+            // Update plot info with category counts
+            const plotInfo = document.querySelector('.plot-info');
+            if (plotInfo) {
+                let categoryInfo = '<p><strong>Data Points by Category:</strong></p>';
+                for (const [category, count] of Object.entries(metadata.categories)) {
+                    categoryInfo += `<p>${formatCategoryName(category)}: ${count}</p>`;
+                }
+                
+                // Add this after the existing variance info
+                const existingContent = plotInfo.innerHTML;
+                plotInfo.innerHTML = existingContent + categoryInfo;
+            }
         }
 
         // Update visualization periodically
@@ -1429,7 +1524,7 @@
                     displayLatestHealthContext(healthData.health_contexts[0]);
                 }
                 if (workData.work_contexts && workData.work_contexts.length > 0) {
-                    displayLatestWorkContext(workData.work_contexts[0]);
+                    displayLatestWorkContext();
                 }
                 if (commuteData.commute_contexts && commuteData.commute_contexts.length > 0) {
                     displayLatestCommuteContext(commuteData.commute_contexts[0]);
@@ -1443,131 +1538,456 @@
         }
 
         // Function to display latest health context
-        function displayLatestHealthContext(context) {
-            const container = document.getElementById('healthContextContainer');
-            const recommendations = generateHealthAdvice(context);
-            
-            container.innerHTML = `
-                <div class="health-info-section">
-                    <div class="health-info-header">
-                        <h3 class="health-info-title">Latest Health Status</h3>
-                        <span class="health-info-timestamp">
-                            ${formatTimestamp(context.created_at)}
-                        </span>
-                                </div>
-                    <div class="health-info-grid">
-                        <div class="health-card">
-                            <div class="reading-status ${getHealthStatus(context.bloodSugar)}">
-                                <h4>Blood Sugar</h4>
-                                <div class="reading-value">${context.bloodSugar || 'N/A'}</div>
-                                <span class="status-badge">${getStatusText(context.bloodSugar)}</span>
+        async function displayLatestHealthContext() {
+            try {
+                const response = await fetch('/api/latest-health-context');
+                const data = await response.json();
+                
+                if (data.health_contexts && data.health_contexts.length > 0) {
+                    const context = data.health_contexts[0];
+                    const healthContextContainer = document.getElementById('health-context-container');
+                    
+                    // Generate recommendations based on the context
+                    const recommendations = generateHealthAdvice(context);
+
+                    // Create the health context HTML
+                    healthContextContainer.innerHTML = `
+                        <div class="latest-status">
+                            <h3>Latest Health Status</h3>
+                            <div class="status-details">
+                                <p><strong>Blood Sugar:</strong> ${context.bloodSugar || 'N/A'}</p>
+                                <p><strong>Exercise:</strong> ${context.exerciseMinutes || 'N/A'} minutes</p>
+                                <p><strong>Meal Type:</strong> ${context.mealType || 'N/A'}</p>
+                                <p><strong>Medication:</strong> ${context.medication || 'N/A'}</p>
                             </div>
-                            <div class="exercise-info">
-                                Exercise: ${context.exerciseMinutes || 'N/A'} minutes
-                            </div>
-                            <div class="meal-info">
-                                Last Meal: ${context.mealType || 'N/A'}
-                            </div>
-                            <div class="notes-section">
-                                <h5>Notes</h5>
+                            <div class="notes">
+                                <p><strong>Notes:</strong></p>
                                 <p>${context.notes || 'No notes available'}</p>
                             </div>
-                            ${recommendations.length > 0 ? `
-                                <div class="recommendations">
-                                    <h5>Recommendations</h5>
-                                    <ul>
-                                        ${recommendations.map(rec => `<li>${rec}</li>`).join('')}
-                                    </ul>
+                            <div class="recommendations">
+                                <h4>Recommendations:</h4>
+                                <ul>
+                                    ${recommendations.map(rec => `<li>${rec}</li>`).join('')}
+                                </ul>
+                                <div class="action-buttons">
+                                    <button onclick="handleSendHealthRecommendation()" class="btn btn-primary">Send to Firebase</button>
+                                    <button onclick="discardHealthRecommendations()" class="btn btn-secondary">Discard</button>
                                 </div>
-                            ` : ''}
+                            </div>
+                            <div id="health-send-status" class="mt-3"></div>
                         </div>
-                    </div>
-                </div>
-            `;
+                    `;
+
+                    // Store the context and recommendations in global variables
+                    window.currentHealthContext = {
+                        bloodSugar: context.bloodSugar || '',
+                        exerciseMinutes: context.exerciseMinutes || '',
+                        mealType: context.mealType || '',
+                        medication: context.medication || '',
+                        notes: context.notes || ''
+                    };
+                    window.currentHealthRecommendations = recommendations;
+
+                } else {
+                    document.getElementById('health-context-container').innerHTML = '<p>No health context available</p>';
+                }
+            } catch (error) {
+                console.error('Error fetching health context:', error);
+                document.getElementById('health-context-container').innerHTML = '<p>Error loading health context</p>';
+            }
         }
 
-        // Function to display latest work context
-        function displayLatestWorkContext(context) {
-            const container = document.getElementById('workContextContainer');
-            const recommendations = generateWorkAdvice(context);
-            
-            container.innerHTML = `
-                <div class="work-info-section">
-                    <div class="work-info-header">
-                        <h3 class="work-info-title">Latest Work Status</h3>
-                        <span class="work-info-timestamp">
-                            ${formatTimestamp(context.created_at)}
-                        </span>
+        async function handleSendHealthRecommendation() {
+            const statusDiv = document.getElementById('health-send-status');
+            try {
+                if (!window.currentHealthContext || !window.currentHealthRecommendations) {
+                    throw new Error('No health context or recommendations available');
+                }
+
+                statusDiv.innerHTML = '<p class="text-info">Sending recommendations to Firebase...</p>';
+                
+                const response = await fetch('/api/send-health-recommendation', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        ...window.currentHealthContext,
+                        recommendations: window.currentHealthRecommendations
+                    })
+                });
+
+                const result = await response.json();
+                
+                if (!response.ok) {
+                    throw new Error(result.error || 'Failed to send health recommendation');
+                }
+
+                console.log('Successfully sent health recommendation:', result);
+                statusDiv.innerHTML = '<p class="text-success">Successfully sent recommendations to Firebase!</p>';
+                
+                // Refresh the display after a short delay
+                setTimeout(() => {
+                    displayLatestHealthContext();
+                }, 2000);
+                
+            } catch (error) {
+                console.error('Error sending health recommendation:', error);
+                statusDiv.innerHTML = `<p class="text-danger">Error sending recommendations: ${error.message}</p>`;
+            }
+        }
+
+        // Initialize work context on page load
+        document.addEventListener('DOMContentLoaded', function() {
+            displayLatestWorkContext();
+        });
+
+        async function displayLatestWorkContext() {
+            try {
+                const response = await fetch('/api/latest-work-context');
+                const data = await response.json();
+                
+                if (data.work_contexts && data.work_contexts.length > 0) {
+                    const context = data.work_contexts[0];
+                    const workContextContainer = document.getElementById('work-context-container');
+                    
+                    // Generate recommendations based on the context
+                    const recommendations = [
+                        `${context.deadline ? '3 days until deadline - plan your time accordingly.' : 'Set a deadline for better planning.'}`,
+                        'Schedule check-ins with team members.',
+                        'Keep collaborators updated on progress.'
+                    ];
+
+                    // Create the work context HTML
+                    workContextContainer.innerHTML = `
+                        <div class="latest-status">
+                            <h3>${context.taskName || 'Unnamed Task'}</h3>
+                            <div class="status-details">
+                                <p><strong>Status:</strong> ${context.status || 'not-started'}</p>
+                                <p><strong>Priority:</strong> <span class="priority ${(context.priority || 'medium').toLowerCase()}">${context.priority || 'medium'}</span></p>
+                                <p><strong>Deadline:</strong> ${context.deadline || 'Not set'}</p>
+                                <p><strong>Team:</strong> ${context.collaborators || 'Not specified'}</p>
                             </div>
-                    <div class="work-info-grid">
-                        <div class="work-card">
-                            <div class="task-status ${getPriorityClass(context.priority)}">
-                                <h4>${context.taskName || 'Unnamed Task'}</h4>
-                                <span class="priority-badge">${context.priority || 'No Priority'}</span>
-                                <div class="task-meta">
-                                    <div>Status: ${context.status || 'N/A'}</div>
-                                    <div>Deadline: ${context.deadline || 'N/A'}</div>
-                                    <div>Team: ${context.collaborators || 'N/A'}</div>
-                                </div>
-                            </div>
-                            <div class="notes-section">
-                                <h5>Notes</h5>
+                            <div class="notes">
+                                <p><strong>Notes:</strong></p>
                                 <p>${context.notes || 'No notes available'}</p>
                             </div>
-                            ${recommendations.length > 0 ? `
-                                <div class="recommendations">
-                                    <h5>Recommendations</h5>
-                                    <ul>
-                                        ${recommendations.map(rec => `<li>${rec}</li>`).join('')}
-                                    </ul>
+                            <div class="recommendations">
+                                <h4>Recommendations:</h4>
+                                <ul>
+                                    ${recommendations.map(rec => `<li>${rec}</li>`).join('')}
+                                </ul>
+                                <div class="action-buttons">
+                                    <button onclick="handleSendWorkRecommendation()" class="btn btn-primary">Send to Firebase</button>
+                                    <button onclick="discardWorkRecommendations()" class="btn btn-secondary">Discard</button>
                                 </div>
-                            ` : ''}
+                            </div>
+                            <div id="send-status" class="mt-3"></div>
                         </div>
-                    </div>
-                </div>
-            `;
+                    `;
+
+                    // Store the context and recommendations in global variables
+                    window.currentWorkContext = {
+                        taskName: context.taskName || 'Unnamed Task',
+                        status: context.status || 'not-started',
+                        priority: context.priority || 'medium',
+                        collaborators: context.collaborators || '',
+                        deadline: context.deadline || '',
+                        notes: context.notes || ''
+                    };
+                    window.currentWorkRecommendations = recommendations;
+
+                } else {
+                    document.getElementById('work-context-container').innerHTML = '<p>No work context available</p>';
+                }
+            } catch (error) {
+                console.error('Error fetching work context:', error);
+                document.getElementById('work-context-container').innerHTML = '<p>Error loading work context</p>';
+            }
         }
+
+        async function handleSendWorkRecommendation() {
+            const statusDiv = document.getElementById('send-status');
+            try {
+                if (!window.currentWorkContext || !window.currentWorkRecommendations) {
+                    throw new Error('No work context or recommendations available');
+                }
+
+                statusDiv.innerHTML = '<p class="text-info">Sending recommendations to Firebase...</p>';
+                
+                const response = await fetch('/api/send-work-recommendation', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        ...window.currentWorkContext,
+                        recommendations: window.currentWorkRecommendations
+                    })
+                });
+
+                const result = await response.json();
+                
+                if (!response.ok) {
+                    throw new Error(result.error || 'Failed to send work recommendation');
+                }
+
+                console.log('Successfully sent work recommendation:', result);
+                statusDiv.innerHTML = '<p class="text-success">Successfully sent recommendations to Firebase!</p>';
+                
+                // Refresh the display after a short delay
+                setTimeout(() => {
+                    displayLatestWorkContext();
+                }, 2000);
+                
+            } catch (error) {
+                console.error('Error sending work recommendation:', error);
+                statusDiv.innerHTML = `<p class="text-danger">Error sending recommendations: ${error.message}</p>`;
+            }
+        }
+
+        function discardWorkRecommendations() {
+            if (confirm('Are you sure you want to discard these recommendations?')) {
+                const statusDiv = document.getElementById('send-status');
+                statusDiv.innerHTML = '<p class="text-info">Discarding recommendations...</p>';
+                setTimeout(() => {
+                    displayLatestWorkContext();
+                }, 500);
+            }
+        }
+
+        // Initialize the display when the page loads
+        document.addEventListener('DOMContentLoaded', function() {
+            displayLatestWorkContext();
+            fetchAndDisplayContexts();
+            loadChromaData();
+            fetchLatestFirebaseQuery();
+            updateEmbeddingsVisualization();
+        });
 
         // Function to display latest commute context
-        function displayLatestCommuteContext(context) {
-            const container = document.getElementById('commuteContextContainer');
-            const recommendations = generateCommuteAdvice(context);
-            
-            container.innerHTML = `
-                <div class="commute-info-section">
-                    <div class="commute-info-header">
-                        <h3 class="commute-info-title">Latest Commute Status</h3>
-                        <span class="commute-info-timestamp">
-                            ${formatTimestamp(context.created_at)}
-                        </span>
-                        </div>
-                    <div class="commute-info-grid">
-                        <div class="commute-card">
-                            <div class="route-info">
-                                <span class="transport-mode ${context.transportMode?.toLowerCase()}">${context.transportMode || 'N/A'}</span>
-                                <span class="traffic-condition ${context.trafficCondition?.toLowerCase()}">${context.trafficCondition || 'N/A'}</span>
-                                <div class="route-details">
-                                    <div>From: ${context.startLocation || 'N/A'}</div>
-                                    <div>To: ${context.endLocation || 'N/A'}</div>
-                                    <div>Duration: ${context.duration || 'N/A'} minutes</div>
-                                </div>
+        async function displayLatestCommuteContext() {
+            try {
+                const response = await fetch('/api/latest-commute-context');
+                const data = await response.json();
+                
+                if (data.commute_contexts && data.commute_contexts.length > 0) {
+                    const context = data.commute_contexts[0];
+                    const commuteContextContainer = document.getElementById('commute-context-container');
+                    
+                    // Generate recommendations based on the context
+                    const recommendations = generateCommuteAdvice(context);
+
+                    // Create the commute context HTML
+                    commuteContextContainer.innerHTML = `
+                        <div class="latest-status">
+                            <h3>Latest Commute Status</h3>
+                            <div class="status-details">
+                                <p><strong>From:</strong> ${context.startLocation || 'N/A'}</p>
+                                <p><strong>To:</strong> ${context.endLocation || 'N/A'}</p>
+                                <p><strong>Duration:</strong> ${context.duration || 'N/A'} minutes</p>
+                                <p><strong>Transport Mode:</strong> ${context.transportMode || 'N/A'}</p>
+                                <p><strong>Traffic Condition:</strong> ${context.trafficCondition || 'N/A'}</p>
                             </div>
-                            <div class="notes-section">
-                                <h5>Notes</h5>
+                            <div class="notes">
+                                <p><strong>Notes:</strong></p>
                                 <p>${context.notes || 'No notes available'}</p>
                             </div>
-                            ${recommendations.length > 0 ? `
-                                <div class="recommendations">
-                                    <h5>Recommendations</h5>
-                                    <ul>
-                                        ${recommendations.map(rec => `<li>${rec}</li>`).join('')}
-                                    </ul>
+                            <div class="recommendations">
+                                <h4>Recommendations:</h4>
+                                <ul>
+                                    ${recommendations.map(rec => `<li>${rec}</li>`).join('')}
+                                </ul>
+                                <div class="action-buttons">
+                                    <button onclick="handleSendCommuteRecommendation()" class="btn btn-primary">Send to Firebase</button>
+                                    <button onclick="discardCommuteRecommendations()" class="btn btn-secondary">Discard</button>
                                 </div>
-                            ` : ''}
+                            </div>
+                            <div id="commute-send-status" class="mt-3"></div>
                         </div>
-                    </div>
-                </div>
-            `;
+                    `;
+
+                    // Store the context and recommendations in global variables
+                    window.currentCommuteContext = {
+                        startLocation: context.startLocation || '',
+                        endLocation: context.endLocation || '',
+                        duration: context.duration || '',
+                        transportMode: context.transportMode || '',
+                        trafficCondition: context.trafficCondition || '',
+                        notes: context.notes || ''
+                    };
+                    window.currentCommuteRecommendations = recommendations;
+
+                } else {
+                    document.getElementById('commute-context-container').innerHTML = '<p>No commute context available</p>';
+                }
+            } catch (error) {
+                console.error('Error fetching commute context:', error);
+                document.getElementById('commute-context-container').innerHTML = '<p>Error loading commute context</p>';
+            }
+        }
+
+        async function handleSendCommuteRecommendation() {
+            const statusDiv = document.getElementById('commute-send-status');
+            try {
+                if (!window.currentCommuteContext || !window.currentCommuteRecommendations) {
+                    throw new Error('No commute context or recommendations available');
+                }
+
+                statusDiv.innerHTML = '<p class="text-info">Sending recommendations to Firebase...</p>';
+                
+                const response = await fetch('/api/send-commute-recommendation', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        ...window.currentCommuteContext,
+                        recommendations: window.currentCommuteRecommendations
+                    })
+                });
+
+                const result = await response.json();
+                
+                if (!response.ok) {
+                    throw new Error(result.error || 'Failed to send commute recommendation');
+                }
+
+                console.log('Successfully sent commute recommendation:', result);
+                statusDiv.innerHTML = '<p class="text-success">Successfully sent recommendations to Firebase!</p>';
+                
+                // Refresh the display after a short delay
+                setTimeout(() => {
+                    displayLatestCommuteContext();
+                }, 2000);
+                
+            } catch (error) {
+                console.error('Error sending commute recommendation:', error);
+                statusDiv.innerHTML = `<p class="text-danger">Error sending recommendations: ${error.message}</p>`;
+            }
+        }
+
+        // Function to send health recommendations to Firebase
+        async function sendHealthToFirebase(encodedContext, encodedRecommendations) {
+            try {
+                const context = JSON.parse(decodeURIComponent(encodedContext));
+                const recommendations = JSON.parse(decodeURIComponent(encodedRecommendations));
+                
+                console.log('Sending health recommendations to Firebase:', {
+                    context: context,
+                    recommendations: recommendations
+                });
+
+                const response = await fetch('/api/send-health-recommendation', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        bloodSugar: context.bloodSugar,
+                        exerciseMinutes: context.exerciseMinutes,
+                        mealType: context.mealType,
+                        medication: context.medication,
+                        notes: context.notes,
+                        recommendations: recommendations,
+                        health_context_id: context.id || null
+                    })
+                });
+
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    throw new Error(errorData.error || 'Failed to save health recommendations');
+                }
+
+                const result = await response.json();
+                console.log('Firebase response:', result);
+
+                if (result.success) {
+                    alert('Health recommendations sent to Firebase successfully');
+                    // Refresh the display
+                    fetchAndDisplayContexts();
+                } else {
+                    throw new Error(result.error || 'Failed to save health recommendations');
+                }
+            } catch (error) {
+                console.error('Error sending health recommendations to Firebase:', error);
+                alert('Error sending health recommendations to Firebase: ' + error.message);
+            }
+        }
+
+        // Function to send commute recommendations to Firebase
+        async function sendCommuteToFirebase(encodedContext, encodedRecommendations) {
+            try {
+                const context = JSON.parse(decodeURIComponent(encodedContext));
+                const recommendations = JSON.parse(decodeURIComponent(encodedRecommendations));
+                
+                console.log('Sending commute recommendations to Firebase:', {
+                    context: context,
+                    recommendations: recommendations
+                });
+
+                const response = await fetch('/api/send-commute-recommendation', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        startLocation: context.startLocation,
+                        endLocation: context.endLocation,
+                        duration: context.duration,
+                        trafficCondition: context.trafficCondition,
+                        transportMode: context.transportMode,
+                        notes: context.notes,
+                        recommendations: recommendations,
+                        commute_context_id: context.id || null
+                    })
+                });
+
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    throw new Error(errorData.error || 'Failed to save commute recommendations');
+                }
+
+                const result = await response.json();
+                console.log('Firebase response:', result);
+
+                if (result.success) {
+                    alert('Commute recommendations sent to Firebase successfully');
+                    // Refresh the display
+                    fetchAndDisplayContexts();
+                } else {
+                    throw new Error(result.error || 'Failed to save commute recommendations');
+                }
+            } catch (error) {
+                console.error('Error sending commute recommendations to Firebase:', error);
+                alert('Error sending commute recommendations to Firebase: ' + error.message);
+            }
+        }
+
+        // Function to discard health recommendations
+        function discardHealthRecommendations() {
+            if (confirm('Are you sure you want to discard these health recommendations?')) {
+                // Refresh the display
+                fetchAndDisplayContexts();
+            }
+        }
+
+        // Function to discard commute recommendations
+        function discardCommuteRecommendations() {
+            if (confirm('Are you sure you want to discard these recommendations?')) {
+                // Clear the global variables
+                window.currentCommuteContext = null;
+                window.currentCommuteRecommendations = null;
+                
+                // Clear the display
+                const container = document.getElementById('commute-context-container');
+                container.innerHTML = '<p>Recommendations discarded. Refreshing...</p>';
+                
+                // Refresh the display after a short delay
+                setTimeout(() => {
+                    displayLatestCommuteContext();
+                }, 1000);
+            }
         }
 
         // Helper functions for status and styling
@@ -1733,10 +2153,7 @@
                         deadline: workContext.deadline,
                         notes: workContext.notes,
                         recommendations: recommendations,
-                        query_id: queryId,
-                        work_context_id: workContext.id || null,
-                        created_at: new Date().toISOString(),
-                        timestamp: new Date().toISOString()
+                        work_context_id: workContext.id || null
                     })
                 });
                 
@@ -1976,9 +2393,15 @@
             });
         }
 
-        // Add styles for context cards
-        const style = document.createElement('style');
-        style.textContent = `
+        // Move all styles to a single block at the end
+        const dynamicStyles = document.createElement('style');
+        dynamicStyles.textContent = `
+            .text-success { color: #28a745; }
+            .text-danger { color: #dc3545; }
+            .text-info { color: #17a2b8; }
+            #send-status { margin-top: 1rem; }
+            #send-status p { margin: 0; padding: 0.5rem; border-radius: 4px; }
+
             .context-card {
                 background: #f8f9fa;
                 border: 1px solid #dee2e6;
@@ -2003,7 +2426,7 @@
                 color: #333;
             }
         `;
-        document.head.appendChild(style);
+        document.head.appendChild(dynamicStyles);
     </script>
 </body>
 </html> 

@@ -19,6 +19,7 @@ import firebase_admin
 from firebase_admin import credentials, firestore
 import datetime
 import sqlite3
+import traceback
 
 # Load environment variables
 load_dotenv()
@@ -334,7 +335,6 @@ def search():
         
         result = process_search_query(query)
         return jsonify(result)
-        
     except Exception as e:
         print(f"Error in search: {str(e)}")
         return jsonify({"error": str(e)}), 500
@@ -473,6 +473,49 @@ def get_embeddings_visualization():
         # Get all data from ChromaDB with embeddings included
         data = collection.get(include=['embeddings', 'documents', 'metadatas'])
         
+        # Get recommendations from Firebase
+        recommendations = []
+        if db is not None:
+            try:
+                # Get health recommendations
+                health_recs = db.collection('health_ai_recommendation').order_by('created_at', direction=firestore.Query.DESCENDING).limit(10).get()
+                for rec in health_recs:
+                    rec_data = rec.to_dict()
+                    text = f"Health Recommendation: Blood Sugar {rec_data.get('bloodSugar')}, Exercise {rec_data.get('exerciseMinutes')} mins, Recommendations: {', '.join(rec_data.get('recommendations', []))}"
+                    recommendations.append({
+                        'text': text,
+                        'type': 'health_recommendation',
+                        'source': 'AI Recommendation',
+                        'id': rec.id
+                    })
+
+                # Get work recommendations
+                work_recs = db.collection('work_ai_recommendation').order_by('created_at', direction=firestore.Query.DESCENDING).limit(10).get()
+                for rec in work_recs:
+                    rec_data = rec.to_dict()
+                    text = f"Work Recommendation: Task {rec_data.get('taskName')}, Status {rec_data.get('status')}, Priority {rec_data.get('priority')}, Recommendations: {', '.join(rec_data.get('recommendations', []))}"
+                    recommendations.append({
+                        'text': text,
+                        'type': 'work_recommendation',
+                        'source': 'AI Recommendation',
+                        'id': rec.id
+                    })
+
+                # Get commute recommendations
+                commute_recs = db.collection('commute_ai_recommendation').order_by('created_at', direction=firestore.Query.DESCENDING).limit(10).get()
+                for rec in commute_recs:
+                    rec_data = rec.to_dict()
+                    text = f"Commute Recommendation: From {rec_data.get('startLocation')} to {rec_data.get('endLocation')}, Mode {rec_data.get('transportMode')}, Recommendations: {', '.join(rec_data.get('recommendations', []))}"
+                    recommendations.append({
+                        'text': text,
+                        'type': 'commute_recommendation',
+                        'source': 'AI Recommendation',
+                        'id': rec.id
+                    })
+
+            except Exception as e:
+                print(f"Error fetching recommendations: {str(e)}")
+
         # If there's no data or no embeddings, return empty visualization
         if not data or 'embeddings' not in data or not data['embeddings']:
             return jsonify({
@@ -484,9 +527,28 @@ def get_embeddings_visualization():
                     "sources": {}
                 }
             })
-        
+
+        # Add recommendation embeddings
+        all_embeddings = data['embeddings']
+        all_documents = data['documents']
+        all_metadatas = data['metadatas']
+
+        # Generate embeddings for recommendations
+        for rec in recommendations:
+            try:
+                rec_embedding = model.encode(rec['text']).tolist()
+                all_embeddings.append(rec_embedding)
+                all_documents.append(rec['text'])
+                all_metadatas.append({
+                    'type': rec['type'],
+                    'source': rec['source'],
+                    'id': rec['id']
+                })
+            except Exception as e:
+                print(f"Error encoding recommendation: {str(e)}")
+
         # Convert embeddings to numpy array
-        embeddings = np.array(data['embeddings'])
+        embeddings = np.array(all_embeddings)
         
         # Determine number of components based on data size
         n_samples = embeddings.shape[0]
@@ -524,7 +586,7 @@ def get_embeddings_visualization():
         
         for i in range(len(coords_3d)):
             # Get metadata for this point
-            metadata = data.get('metadatas', [{}])[i]
+            metadata = all_metadatas[i]
             doc_type = metadata.get('type', 'unknown')
             source = metadata.get('source', 'unknown')
             
@@ -537,10 +599,10 @@ def get_embeddings_visualization():
                 'x': float(coords_3d[i, 0]),
                 'y': float(coords_3d[i, 1]),
                 'z': float(coords_3d[i, 2]),
-                'text': data['documents'][i][:200] + '...' if len(data['documents'][i]) > 200 else data['documents'][i],
+                'text': all_documents[i][:200] + '...' if len(all_documents[i]) > 200 else all_documents[i],
                 'source': source,
                 'type': doc_type,
-                'id': data['ids'][i],
+                'id': metadata.get('id', f'doc_{i}'),
                 'size': 5,  # Default size
                 'color': get_point_color(doc_type)  # Get color based on document type
             }
@@ -590,6 +652,9 @@ def get_point_color(doc_type):
         'work': '#0000FF',   # Blue for work context
         'commute': '#FFA500', # Orange for commute context
         'layout': '#800080',  # Purple for layout data
+        'health_recommendation': '#90EE90',  # Light green for health recommendations
+        'work_recommendation': '#87CEEB',    # Light blue for work recommendations
+        'commute_recommendation': '#FFB6C1',  # Light pink for commute recommendations
         'unknown': '#808080'  # Gray for unknown types
     }
     return color_map.get(doc_type, color_map['unknown'])
@@ -1144,15 +1209,73 @@ def save_recommendations():
         print(f"Error saving recommendations: {str(e)}")
         return jsonify({"error": f"Error saving recommendations: {str(e)}"}), 500
 
+def sync_local_recommendations_with_firebase():
+    """Sync local work recommendations with Firebase"""
+    try:
+        # Get local recommendations from SQLite
+        conn = sqlite3.connect('local_data.db')
+        c = conn.cursor()
+        c.execute('SELECT * FROM work_context ORDER BY created_at DESC')
+        local_recommendations = c.fetchall()
+        conn.close()
+
+        if not local_recommendations:
+            print("No local recommendations to sync")
+            return
+
+        # Get Firebase recommendations
+        recommendations_ref = db.collection('work_ai_recommendation')
+        
+        for local_rec in local_recommendations:
+            # Convert SQLite row to dict
+            columns = ['id', 'task_name', 'status', 'priority', 'collaborators', 
+                      'deadline', 'notes', 'timestamp', 'type', 'created_at']
+            rec_dict = dict(zip(columns, local_rec))
+            
+            # Check if recommendation exists in Firebase
+            query = recommendations_ref.where('work_context_id', '==', rec_dict['id']).limit(1).get()
+            
+            recommendation_data = {
+                'taskName': rec_dict['task_name'],
+                'status': rec_dict['status'],
+                'priority': rec_dict['priority'],
+                'collaborators': rec_dict['collaborators'],
+                'deadline': rec_dict['deadline'],
+                'notes': rec_dict['notes'],
+                'work_context_id': rec_dict['id'],
+                'timestamp': firestore.SERVER_TIMESTAMP,
+                'created_at': firestore.SERVER_TIMESTAMP
+            }
+            
+            if not query:  # Document doesn't exist in Firebase
+                print(f"Adding local recommendation {rec_dict['id']} to Firebase")
+                doc_ref = recommendations_ref.add(recommendation_data)
+                print(f"Created new recommendation in Firebase with ID: {doc_ref[1].id}")
+            else:
+                # Update existing document
+                for doc in query:
+                    print(f"Updating existing recommendation in Firebase with ID: {doc.id}")
+                    doc.reference.update(recommendation_data)
+                    
+    except Exception as e:
+        print(f"Error syncing recommendations with Firebase: {str(e)}")
+        print(f"Stack trace: {traceback.format_exc()}")
+
 @app.route('/api/save-work-recommendations', methods=['POST'])
 def save_work_recommendations():
     """Save AI-generated work recommendations to Firebase"""
+    print("Received request to save work recommendations")
+    
     if db is None:
+        print("Error: Firebase DB is not initialized")
         return jsonify({"error": "Firebase not initialized"}), 500
     
     try:
         data = request.get_json()
+        print(f"Received work recommendation data: {json.dumps(data, indent=2)}")
+        
         if not data:
+            print("Error: No data provided in request")
             return jsonify({"error": "No data provided"}), 400
             
         # Create a new document in the work_ai_recommendation collection
@@ -1170,12 +1293,37 @@ def save_work_recommendations():
             'query_id': data.get('query_id'),
             'work_context_id': data.get('work_context_id'),
             'timestamp': firestore.SERVER_TIMESTAMP,
-            'created_at': data.get('created_at') or firestore.SERVER_TIMESTAMP
+            'created_at': firestore.SERVER_TIMESTAMP  # Force server timestamp
         }
         
-        # Add the document to the collection
+        # First, try to update existing document if work_context_id exists
+        if data.get('work_context_id'):
+            # Query for existing recommendation with same work_context_id
+            existing_docs = recommendations_ref.where('work_context_id', '==', data['work_context_id']).limit(1).get()
+            
+            for doc in existing_docs:
+                # Update existing document
+                doc.reference.update(recommendation_data)
+                print(f"Updated existing recommendation document with ID: {doc.id}")
+                return jsonify({
+                    "success": True,
+                    "message": "Work recommendations updated successfully",
+                    "recommendation_id": doc.id
+                })
+        
+        # If no existing document found or no work_context_id, create new document
         doc_ref = recommendations_ref.add(recommendation_data)
-        print(f"Successfully saved work recommendations to work_ai_recommendation collection with ID: {doc_ref[1].id}")
+        print(f"Created new recommendation document with ID: {doc_ref[1].id}")
+        
+        # Verify the document was saved
+        saved_doc = doc_ref[1].get()
+        if not saved_doc.exists:
+            raise Exception("Document was not saved to Firebase")
+            
+        print(f"Verified document exists in Firebase with data: {saved_doc.to_dict()}")
+        
+        # Sync all local recommendations with Firebase
+        sync_local_recommendations_with_firebase()
         
         return jsonify({
             "success": True,
@@ -1183,8 +1331,10 @@ def save_work_recommendations():
             "recommendation_id": doc_ref[1].id
         })
     except Exception as e:
-        print(f"Error saving work recommendations: {str(e)}")
-        return jsonify({"error": f"Error saving work recommendations: {str(e)}"}), 500
+        error_msg = f"Error saving work recommendations: {str(e)}"
+        print(f"Error details: {error_msg}")
+        print(f"Stack trace: {traceback.format_exc()}")
+        return jsonify({"error": error_msg}), 500
 
 @app.route('/api/save-commute-recommendations', methods=['POST'])
 def save_commute_recommendations():
@@ -1394,6 +1544,185 @@ def add_to_embeddings(text, metadata):
     except Exception as e:
         print(f"Error adding to embeddings: {str(e)}")
         return False
+
+@app.route('/api/send-work-recommendation', methods=['POST'])
+def send_work_recommendation():
+    """Explicitly send a work recommendation to Firebase"""
+    try:
+        print("Received request to send work recommendation")
+        data = request.get_json()
+        print(f"Request data: {json.dumps(data, indent=2)}")
+        
+        if not data:
+            return jsonify({"error": "No data provided"}), 400
+
+        # Required fields
+        required_fields = ['taskName', 'status', 'priority', 'recommendations']
+        missing_fields = [field for field in required_fields if field not in data]
+        if missing_fields:
+            return jsonify({"error": f"Missing required fields: {', '.join(missing_fields)}"}), 400
+
+        # Create recommendation data
+        recommendation_data = {
+            'taskName': data['taskName'],
+            'status': data['status'],
+            'priority': data['priority'],
+            'recommendations': data['recommendations'],
+            'collaborators': data.get('collaborators', ''),
+            'deadline': data.get('deadline', ''),
+            'notes': data.get('notes', ''),
+            'work_context_id': data.get('work_context_id'),
+            'timestamp': firestore.SERVER_TIMESTAMP,
+            'created_at': firestore.SERVER_TIMESTAMP
+        }
+
+        print(f"Preparing to save recommendation data: {json.dumps(recommendation_data, indent=2, default=str)}")
+
+        # Add to Firebase
+        recommendations_ref = db.collection('work_ai_recommendation')
+        doc_ref = recommendations_ref.add(recommendation_data)
+        doc_id = doc_ref[1].id
+        print(f"Created new recommendation document with ID: {doc_id}")
+        
+        # Verify the save
+        saved_doc = doc_ref[1].get()
+        if not saved_doc.exists:
+            raise Exception("Failed to save recommendation to Firebase")
+
+        saved_data = saved_doc.to_dict()
+        print(f"Verified saved document data: {json.dumps(saved_data, indent=2, default=str)}")
+
+        return jsonify({
+            "success": True,
+            "message": "Recommendation sent to Firebase successfully",
+            "recommendation_id": doc_id,
+            "saved_data": saved_data
+        })
+
+    except Exception as e:
+        error_msg = f"Error sending recommendation to Firebase: {str(e)}"
+        print(f"Error details: {error_msg}")
+        print(f"Stack trace: {traceback.format_exc()}")
+        return jsonify({"error": error_msg}), 500
+
+@app.route('/api/send-health-recommendation', methods=['POST'])
+def send_health_recommendation():
+    """Explicitly send a health recommendation to Firebase"""
+    try:
+        print("Received request to send health recommendation")
+        data = request.get_json()
+        print(f"Request data: {json.dumps(data, indent=2)}")
+        
+        if not data:
+            return jsonify({"error": "No data provided"}), 400
+
+        # Required fields
+        required_fields = ['bloodSugar', 'exerciseMinutes', 'mealType', 'recommendations']
+        missing_fields = [field for field in required_fields if field not in data]
+        if missing_fields:
+            return jsonify({"error": f"Missing required fields: {', '.join(missing_fields)}"}), 400
+
+        # Create recommendation data
+        recommendation_data = {
+            'bloodSugar': data['bloodSugar'],
+            'exerciseMinutes': data['exerciseMinutes'],
+            'mealType': data['mealType'],
+            'recommendations': data['recommendations'],
+            'medication': data.get('medication', ''),
+            'notes': data.get('notes', ''),
+            'health_context_id': data.get('health_context_id'),
+            'timestamp': firestore.SERVER_TIMESTAMP,
+            'created_at': firestore.SERVER_TIMESTAMP
+        }
+
+        print(f"Preparing to save health recommendation data: {json.dumps(recommendation_data, indent=2, default=str)}")
+
+        # Add to Firebase
+        recommendations_ref = db.collection('health_ai_recommendation')
+        doc_ref = recommendations_ref.add(recommendation_data)
+        doc_id = doc_ref[1].id
+        print(f"Created new health recommendation document with ID: {doc_id}")
+        
+        # Verify the save
+        saved_doc = doc_ref[1].get()
+        if not saved_doc.exists:
+            raise Exception("Failed to save health recommendation to Firebase")
+
+        saved_data = saved_doc.to_dict()
+        print(f"Verified saved document data: {json.dumps(saved_data, indent=2, default=str)}")
+
+        return jsonify({
+            "success": True,
+            "message": "Health recommendation sent to Firebase successfully",
+            "recommendation_id": doc_id,
+            "saved_data": saved_data
+        })
+
+    except Exception as e:
+        error_msg = f"Error sending health recommendation to Firebase: {str(e)}"
+        print(f"Error details: {error_msg}")
+        print(f"Stack trace: {traceback.format_exc()}")
+        return jsonify({"error": error_msg}), 500
+
+@app.route('/api/send-commute-recommendation', methods=['POST'])
+def send_commute_recommendation():
+    """Explicitly send a commute recommendation to Firebase"""
+    try:
+        print("Received request to send commute recommendation")
+        data = request.get_json()
+        print(f"Request data: {json.dumps(data, indent=2)}")
+        
+        if not data:
+            return jsonify({"error": "No data provided"}), 400
+
+        # Required fields
+        required_fields = ['startLocation', 'endLocation', 'duration', 'recommendations']
+        missing_fields = [field for field in required_fields if field not in data]
+        if missing_fields:
+            return jsonify({"error": f"Missing required fields: {', '.join(missing_fields)}"}), 400
+
+        # Create recommendation data
+        recommendation_data = {
+            'startLocation': data['startLocation'],
+            'endLocation': data['endLocation'],
+            'duration': data['duration'],
+            'recommendations': data['recommendations'],
+            'trafficCondition': data.get('trafficCondition', ''),
+            'transportMode': data.get('transportMode', ''),
+            'notes': data.get('notes', ''),
+            'commute_context_id': data.get('commute_context_id'),
+            'timestamp': firestore.SERVER_TIMESTAMP,
+            'created_at': firestore.SERVER_TIMESTAMP
+        }
+
+        print(f"Preparing to save commute recommendation data: {json.dumps(recommendation_data, indent=2, default=str)}")
+
+        # Add to Firebase
+        recommendations_ref = db.collection('commute_ai_recommendation')
+        doc_ref = recommendations_ref.add(recommendation_data)
+        doc_id = doc_ref[1].id
+        print(f"Created new commute recommendation document with ID: {doc_id}")
+        
+        # Verify the save
+        saved_doc = doc_ref[1].get()
+        if not saved_doc.exists:
+            raise Exception("Failed to save commute recommendation to Firebase")
+
+        saved_data = saved_doc.to_dict()
+        print(f"Verified saved document data: {json.dumps(saved_data, indent=2, default=str)}")
+
+        return jsonify({
+            "success": True,
+            "message": "Commute recommendation sent to Firebase successfully",
+            "recommendation_id": doc_id,
+            "saved_data": saved_data
+        })
+
+    except Exception as e:
+        error_msg = f"Error sending commute recommendation to Firebase: {str(e)}"
+        print(f"Error details: {error_msg}")
+        print(f"Stack trace: {traceback.format_exc()}")
+        return jsonify({"error": error_msg}), 500
 
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=5000) 

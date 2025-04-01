@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>UbumuntuBrain - Commute History</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='images/favicon.svg') }}">
+</head>
+<body>
+    <div class="app-container">
+        <header class="main-header">
+            <div class="logo-container">
+                <img src="{{ url_for('static', filename='images/logo.svg') }}" alt="UbumuntuBrain Logo" class="logo">
+                <h1 class="app-title">UbumuntuBrain</h1>
+            </div>
+            <button id="navToggle" class="nav-toggle">
+                <span></span>
+                <span></span>
+                <span></span>
+            </button>
+            <nav id="navMenu" class="main-nav">
+                <ul class="nav-list">
+                    <li><a href="{{ url_for('home') }}">Home</a></li>
+                    <li><a href="{{ url_for('create') }}">Create</a></li>
+                    <li class="active"><a href="{{ url_for('history') }}">History</a></li>
+                </ul>
+            </nav>
+        </header>
+
+        <main class="main-content">
+            <section class="history-section">
+                <div class="section-header">
+                    <h2>Commute History</h2>
+                    <p class="section-description">Your past commute contexts and recommendations.</p>
+                </div>
+                <div id="historyContainer" class="history-container">
+                    <div class="loading">Loading commute history...</div>
+                </div>
+            </section>
+        </main>
+
+        <footer class="main-footer">
+            <p>&copy; 2024 UbumuntuBrain. All rights reserved.</p>
+        </footer>
+    </div>
+
+    <script type="module" src="{{ url_for('static', filename='js/index.js') }}"></script>
+    <script>
+        // Display commute context history
+        function displayCommuteContextList(data) {
+            const container = document.getElementById('historyContainer');
+            
+            if (!data || !data.commute_contexts || data.commute_contexts.length === 0) {
+                container.innerHTML = '<div class="empty-message">No commute history available</div>';
+                return;
+            }
+            
+            const contexts = data.commute_contexts;
+            let html = '<div class="history-list">';
+            
+            contexts.forEach((context, index) => {
+                // Process fields from Firebase based on what's available
+                const destination = context.endLocation || context.destination || 'N/A';
+                const distance = context.distance || (context.duration ? `${context.duration} min` : 'N/A');
+                const traffic = context.trafficCondition || context.traffic || 'N/A';
+                const notes = context.notes || '';
+                const recommendations = context.recommendations || [];
+                const source = context.source || 'Unknown';
+                
+                html += `
+                    <div class="history-item">
+                        <div class="history-item-header">
+                            <div class="history-item-title-row">
+                                <h3 class="history-item-title">Commute to ${destination}</h3>
+                                <span class="history-item-source">${source}</span>
+                            </div>
+                            <span class="history-item-time">${formatTimestamp(context.timestamp || context.created_at)}</span>
+                        </div>
+                        <div class="history-item-details">
+                            <div class="history-detail-row">
+                                <span class="detail-label">From:</span>
+                                <span class="detail-value">${context.startLocation || 'N/A'}</span>
+                            </div>
+                            <div class="history-detail-row">
+                                <span class="detail-label">Distance/Duration:</span>
+                                <span class="detail-value">${distance}</span>
+                            </div>
+                            <div class="history-detail-row">
+                                <span class="detail-label">Traffic:</span>
+                                <span class="detail-value traffic-${traffic.toLowerCase().replace(/\s+/g, '-')}">${traffic}</span>
+                            </div>
+                            ${notes ? `
+                                <div class="history-detail-row">
+                                    <span class="detail-label">Notes:</span>
+                                    <span class="detail-value">${notes}</span>
+                                </div>
+                            ` : ''}
+                            ${recommendations.length > 0 ? `
+                                <div class="history-recommendations">
+                                    <h4>Recommendations:</h4>
+                                    <ul>
+                                        ${recommendations.map(rec => `<li>${rec}</li>`).join('')}
+                                    </ul>
+                                </div>
+                            ` : ''}
+                        </div>
+                    </div>
+                `;
+            });
+            
+            html += '</div>';
+            container.innerHTML = html;
+        }
+    </script>
+</body>
+</html> 

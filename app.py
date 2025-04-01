@@ -546,6 +546,7 @@ def get_embeddings_visualization():
                 })
             except Exception as e:
                 print(f"Error encoding recommendation: {str(e)}")
+                continue
 
         # Convert embeddings to numpy array
         embeddings = np.array(all_embeddings)

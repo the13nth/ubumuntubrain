@@ -1055,9 +1055,141 @@
         .text-info { color: #17a2b8; }
         #send-status { margin-top: 1rem; }
         #send-status p { margin: 0; padding: 0.5rem; border-radius: 4px; }
+
+        /* Add loading animation styles */
+        .loading-container {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(255, 255, 255, 0.95);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            z-index: 9999;
+        }
+
+        .loading-status {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 10px;
+            margin-top: 20px;
+        }
+
+        .loading-text {
+            font-size: 18px;
+            color: #333;
+            font-weight: 500;
+        }
+
+        .loading-progress {
+            font-size: 14px;
+            color: #666;
+        }
+
+        .current-task {
+            font-size: 14px;
+            color: #0066cc;
+            margin-top: 5px;
+        }
+
+        .loading-spinner {
+            width: 50px;
+            height: 50px;
+            border: 5px solid #f3f3f3;
+            border-top: 5px solid #3498db;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        /* Hide main content while loading */
+        .main-content {
+            display: none;
+        }
+
+        /* Show main content when loaded */
+        .main-content.loaded {
+            display: block;
+        }
+
+        .query-box {
+            border: 1px solid #ddd;
+            padding: 15px;
+            margin: 10px 0;
+            border-radius: 5px;
+            background-color: #f9f9f9;
+        }
+
+        .query-text {
+            font-size: 1.1em;
+            margin-bottom: 10px;
+        }
+
+        .query-info {
+            display: flex;
+            justify-content: space-between;
+            color: #666;
+            font-size: 0.9em;
+        }
+
+        .process-btn {
+            margin-top: 10px;
+            padding: 5px 15px;
+            background-color: #007bff;
+            color: white;
+            border: none;
+            border-radius: 3px;
+            cursor: pointer;
+        }
+
+        .process-btn:hover {
+            background-color: #0056b3;
+        }
     </style>
 </head>
 <body>
+    <!-- Add Firebase SDK scripts before your custom scripts -->
+    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
+
+    <!-- Initialize Firebase configuration -->
+    <script>
+    const firebaseConfig = {
+        apiKey: "AIzaSyDCl5yDDFNPgP9fgKWnHYa2-wY8TF9QcbE",
+        authDomain: "ubumuntubrain.firebaseapp.com",
+        projectId: "ubumuntubrain",
+        storageBucket: "ubumuntubrain.appspot.com",
+        messagingSenderId: "558092671733",
+        appId: "1:558092671733:web:1a1a8cfc2e996ee5be8780",
+        measurementId: "G-1L1Q65V0VY"
+    };
+
+    // Initialize Firebase before any other Firebase operations
+    firebase.initializeApp(firebaseConfig);
+    const db = firebase.firestore();
+    </script>
+
+    <!-- Update the loading container HTML -->
+    <div id="loading-container" class="loading-container" style="display: flex;">
+        <div class="loading-spinner"></div>
+        <div class="loading-status">
+            <div id="loading-text" class="loading-text">Initializing...</div>
+            <div id="loading-progress" class="loading-progress">0/8 components loaded</div>
+            <div id="current-task" class="current-task"></div>
+        </div>
+    </div>
+
+    <!-- Wrap main content -->
+    <div id="main-content" class="main-content" style="display: none;">
+        <div class="container mt-4">
     <h1 class="page-title">Retrieval Augmented Generation (UI/User context)</h1>
     <div class="container">
         <div class="left-panel">
@@ -1106,10 +1238,12 @@
 
             <div class="section firebase-query-section">
                 <h2>Latest UserQuery</h2>
-                <div id="queryContainer">
-                    <div class="loading">
-                        <div class="spinner"></div>
-                        <span>Loading query from Firebase...</span>
+                        <div id="latest-query-container" class="query-box">
+                            <div id="query-text" class="query-text"></div>
+                            <div id="query-info" class="query-info">
+                                <span id="query-timestamp"></span>
+                                <span id="query-status"></span>
+                            </div>
         </div>
     </div>
                 <div id="loadingQuery" class="loading-query" style="display: none;">
@@ -1136,7 +1270,7 @@
                     <div class="loading">
                         <div class="spinner"></div>
                         <span>Loading work context from Firebase...</span>
-                    </div>
+            </div>
                 </div>
                 <div id="work-context-container"></div>
             </div>
@@ -1159,17 +1293,300 @@
   
 
     <script>
-        // Load existing data when page loads
-        async function loadChromaData() {
+        // Update the loading tasks object with task names
+        const loadingTasks = {
+            firebaseInitialized: { complete: false, name: 'Firebase Initialization' },
+            workContext: { complete: false, name: 'Work Context' },
+            healthContext: { complete: false, name: 'Health Context' },
+            commuteContext: { complete: false, name: 'Commute Context' },
+            chromaData: { complete: false, name: 'ChromaDB Data' },
+            firebaseQuery: { complete: false, name: 'Firebase Query' },
+            embeddings: { complete: false, name: 'Embeddings' },
+            mapRendered: { complete: false, name: '3D Map' }
+        };
+
+        // Function to update loading state with detailed progress
+        function updateLoadingState() {
+            const completedTasks = Object.values(loadingTasks).filter(task => task.complete).length;
+            const totalTasks = Object.keys(loadingTasks).length;
+            const loadingProgress = document.getElementById('loading-progress');
+            const loadingContainer = document.getElementById('loading-container');
+            const mainContent = document.getElementById('main-content');
+            
+            loadingProgress.textContent = `${completedTasks}/${totalTasks} components loaded`;
+
+            if (completedTasks === totalTasks) {
+                loadingContainer.style.display = 'none';
+                mainContent.style.display = 'block';
+            }
+        }
+
+        // Function to update current task display
+        function updateCurrentTask(taskName) {
+            const currentTask = document.getElementById('current-task');
+            currentTask.textContent = `Loading: ${taskName}...`;
+        }
+
+        // Initialize the page with improved error handling
+        document.addEventListener('DOMContentLoaded', async () => {
+            const loadingContainer = document.getElementById('loading-container');
+            const mainContent = document.getElementById('main-content');
+            
+            // Ensure loading screen is visible and main content is hidden
+            loadingContainer.style.display = 'flex';
+            mainContent.style.display = 'none';
+            
             try {
-                console.log("Fetching ChromaDB data...");
+                updateCurrentTask('Firebase');
+                // Mark Firebase as initialized since we did it in the script above
+                loadingTasks.firebaseInitialized.complete = true;
+                updateLoadingState();
+
+                // Load all data concurrently with proper error handling
+                const tasks = [
+                    { promise: displayLatestWorkContext(), name: 'Work Context', task: 'workContext' },
+                    { promise: displayLatestHealthContext(), name: 'Health Context', task: 'healthContext' },
+                    { promise: displayLatestCommuteContext(), name: 'Commute Context', task: 'commuteContext' },
+                    { promise: loadChromaData(), name: 'ChromaDB Data', task: 'chromaData' },
+                    { promise: fetchLatestFirebaseQuery(), name: 'Firebase Query', task: 'firebaseQuery' },
+                    { promise: updateEmbeddingsVisualization(), name: '3D Map', task: 'mapRendered' }
+                ];
+
+                for (const task of tasks) {
+                    updateCurrentTask(task.name);
+                    try {
+                        await task.promise;
+                        loadingTasks[task.task].complete = true;
+                        updateLoadingState();
+                    } catch (error) {
+                        console.error(`Error loading ${task.name}:`, error);
+                        // Mark task as complete even if it failed to allow progress
+                        loadingTasks[task.task].complete = true;
+                        updateLoadingState();
+                    }
+                }
+
+            } catch (error) {
+                console.error('Error during initialization:', error);
+            } finally {
+                // Always show the main content after attempting to load everything
+                loadingContainer.style.display = 'none';
+                mainContent.style.display = 'block';
+            }
+        });
+
+        // Update the display functions to use the new loading state system
+        async function displayLatestWorkContext() {
+            updateCurrentTask('Work Context');
+            try {
+                const response = await fetch('/api/latest-work-context');
+                const data = await response.json();
+                
+                if (data.work_contexts && data.work_contexts.length > 0) {
+                    const context = data.work_contexts[0];
+                    const workContextContainer = document.getElementById('work-context-container');
+                    
+                    // Generate recommendations based on the context
+                    const recommendations = generateWorkAdvice(context);
+
+                    // Create the work context HTML
+                    workContextContainer.innerHTML = `
+                        <div class="latest-status">
+                            <h3>Latest Work Status</h3>
+                            <div class="status-details">
+                                <p><strong>Task:</strong> ${context.taskName || 'N/A'}</p>
+                                <p><strong>Status:</strong> ${context.status || 'N/A'}</p>
+                                <p><strong>Priority:</strong> ${context.priority || 'N/A'}</p>
+                                <p><strong>Deadline:</strong> ${context.deadline || 'N/A'}</p>
+                                <p><strong>Team:</strong> ${context.collaborators || 'N/A'}</p>
+                            </div>
+                            <div class="notes">
+                                <p><strong>Notes:</strong></p>
+                                <p>${context.notes || 'No notes available'}</p>
+                            </div>
+                            <div class="recommendations">
+                                <h4>Recommendations:</h4>
+                                <ul>
+                                    ${recommendations.map(rec => `<li>${rec}</li>`).join('')}
+                                </ul>
+                                <div class="action-buttons">
+                                    <button onclick="handleSendWorkRecommendation()" class="btn btn-primary">Send to Firebase</button>
+                                    <button onclick="discardWorkRecommendations()" class="btn btn-secondary">Discard</button>
+                                </div>
+                            </div>
+                            <div id="work-send-status" class="mt-3"></div>
+                        </div>
+                    `;
+
+                    // Store the context and recommendations in global variables
+                    window.currentWorkContext = {
+                        taskName: context.taskName || '',
+                        status: context.status || '',
+                        priority: context.priority || '',
+                        collaborators: context.collaborators || '',
+                        deadline: context.deadline || '',
+                        notes: context.notes || ''
+                    };
+                    window.currentWorkRecommendations = recommendations;
+                } else {
+                    document.getElementById('work-context-container').innerHTML = '<p>No work context available</p>';
+                }
+            } catch (error) {
+                console.error('Error displaying work context:', error);
+                loadingTasks.workContext.complete = true; // Mark as complete even on error
+                updateLoadingState();
+            } finally {
+                loadingTasks.workContext.complete = true;
+                updateLoadingState();
+            }
+        }
+
+        // Update other display functions similarly
+        async function displayLatestHealthContext() {
+            updateCurrentTask('Health Context');
+            try {
+                const response = await fetch('/api/latest-health-context');
+                const data = await response.json();
+                
+                if (data.health_contexts && data.health_contexts.length > 0) {
+                    const context = data.health_contexts[0];
+                    const healthContextContainer = document.getElementById('health-context-container');
+                    
+                    // Generate recommendations based on the context
+                    const recommendations = generateHealthAdvice(context);
+
+                    // Create the health context HTML
+                    healthContextContainer.innerHTML = `
+                        <div class="latest-status">
+                            <h3>Latest Health Status</h3>
+                            <div class="status-details">
+                                <p><strong>Blood Sugar:</strong> ${context.bloodSugar || 'N/A'}</p>
+                                <p><strong>Exercise:</strong> ${context.exerciseMinutes || 'N/A'} minutes</p>
+                                <p><strong>Meal Type:</strong> ${context.mealType || 'N/A'}</p>
+                                <p><strong>Medication:</strong> ${context.medication || 'N/A'}</p>
+                            </div>
+                            <div class="notes">
+                                <p><strong>Notes:</strong></p>
+                                <p>${context.notes || 'No notes available'}</p>
+                            </div>
+                            <div class="recommendations">
+                                <h4>Recommendations:</h4>
+                                <ul>
+                                    ${recommendations.map(rec => `<li>${rec}</li>`).join('')}
+                                </ul>
+                                <div class="action-buttons">
+                                    <button onclick="handleSendHealthRecommendation()" class="btn btn-primary">Send to Firebase</button>
+                                    <button onclick="discardHealthRecommendations()" class="btn btn-secondary">Discard</button>
+                                </div>
+                            </div>
+                            <div id="health-send-status" class="mt-3"></div>
+                        </div>
+                    `;
+
+                    // Store the context and recommendations in global variables
+                    window.currentHealthContext = {
+                        bloodSugar: context.bloodSugar || '',
+                        exerciseMinutes: context.exerciseMinutes || '',
+                        mealType: context.mealType || '',
+                        medication: context.medication || '',
+                        notes: context.notes || ''
+                    };
+                    window.currentHealthRecommendations = recommendations;
+
+                } else {
+                    document.getElementById('health-context-container').innerHTML = '<p>No health context available</p>';
+                }
+            } catch (error) {
+                console.error('Error displaying health context:', error);
+                loadingTasks.healthContext.complete = true; // Mark as complete even on error
+                updateLoadingState();
+            } finally {
+                loadingTasks.healthContext.complete = true;
+                updateLoadingState();
+            }
+        }
+
+        async function displayLatestCommuteContext() {
+            updateCurrentTask('Commute Context');
+            try {
+                const response = await fetch('/api/latest-commute-context');
+                const data = await response.json();
+                
+                if (data.commute_contexts && data.commute_contexts.length > 0) {
+                    const context = data.commute_contexts[0];
+                    const commuteContextContainer = document.getElementById('commute-context-container');
+                    
+                    // Generate recommendations based on the context
+                    const recommendations = generateCommuteAdvice(context);
+
+                    // Create the commute context HTML
+                    commuteContextContainer.innerHTML = `
+                        <div class="latest-status">
+                            <h3>Latest Commute Status</h3>
+                            <div class="status-details">
+                                <p><strong>From:</strong> ${context.startLocation || 'N/A'}</p>
+                                <p><strong>To:</strong> ${context.endLocation || 'N/A'}</p>
+                                <p><strong>Duration:</strong> ${context.duration || 'N/A'} minutes</p>
+                                <p><strong>Transport Mode:</strong> ${context.transportMode || 'N/A'}</p>
+                                <p><strong>Traffic Condition:</strong> ${context.trafficCondition || 'N/A'}</p>
+                            </div>
+                            <div class="notes">
+                                <p><strong>Notes:</strong></p>
+                                <p>${context.notes || 'No notes available'}</p>
+                            </div>
+                            <div class="recommendations">
+                                <h4>Recommendations:</h4>
+                                <ul>
+                                    ${recommendations.map(rec => `<li>${rec}</li>`).join('')}
+                                </ul>
+                                <div class="action-buttons">
+                                    <button onclick="handleSendCommuteRecommendation()" class="btn btn-primary">Send to Firebase</button>
+                                    <button onclick="discardCommuteRecommendations()" class="btn btn-secondary">Discard</button>
+                                </div>
+                            </div>
+                            <div id="commute-send-status" class="mt-3"></div>
+                        </div>
+                    `;
+
+                    // Store the context and recommendations in global variables
+                    window.currentCommuteContext = {
+                        startLocation: context.startLocation || '',
+                        endLocation: context.endLocation || '',
+                        duration: context.duration || '',
+                        transportMode: context.transportMode || '',
+                        trafficCondition: context.trafficCondition || '',
+                        notes: context.notes || ''
+                    };
+                    window.currentCommuteRecommendations = recommendations;
+
+                } else {
+                    document.getElementById('commute-context-container').innerHTML = '<p>No commute context available</p>';
+                }
+            } catch (error) {
+                console.error('Error displaying commute context:', error);
+                loadingTasks.commuteContext.complete = true; // Mark as complete even on error
+                updateLoadingState();
+            } finally {
+                loadingTasks.commuteContext.complete = true;
+                updateLoadingState();
+            }
+        }
+
+        async function loadChromaData() {
+            updateCurrentTask('ChromaDB Data');
+            try {
                 const response = await fetch('/api/data');
                 const data = await response.json();
                 console.log("Received data:", data);
                 updateDataTable(data);
                 updateVisualization();
             } catch (error) {
-                console.error('Error loading data:', error);
+                console.error('Error loading Chroma data:', error);
+                loadingTasks.chromaData.complete = true; // Mark as complete even on error
+                updateLoadingState();
+            } finally {
+                loadingTasks.chromaData.complete = true;
+                updateLoadingState();
             }
         }
 
@@ -1261,11 +1678,11 @@
         }
 
         // Function to update the 3D visualization
-        function updateEmbeddingsVisualization() {
-            fetch('/api/embeddings-visualization')
-                .then(response => response.json())
-                .then(data => {
-                    const container = document.getElementById('embedding-plot');
+        async function updateEmbeddingsVisualization() {
+            updateCurrentTask('3D Map');
+            try {
+                const response = await fetch('/api/embeddings-visualization');
+                const data = await response.json();
                     
                     if (data.points && data.points.length > 0) {
                         const traces = [];
@@ -1274,102 +1691,117 @@
                         // Create a trace for each category
                         categories.forEach(category => {
                             const categoryPoints = data.points.filter(p => p.type === category);
-                            const isRecommendation = category.includes('recommendation');
-                            
+                        const isRecommendation = category.includes('recommendation');
+                        
                             traces.push({
-                                name: formatCategoryName(category),
+                            name: formatCategoryName(category),
                                 x: categoryPoints.map(p => p.x),
                                 y: categoryPoints.map(p => p.y),
                                 z: categoryPoints.map(p => p.z),
-                                mode: 'markers',
+                    mode: 'markers',
                                 type: 'scatter3d',
-                                marker: {
-                                    size: isRecommendation ? 8 : 6,
-                                    color: categoryPoints[0].color,
-                                    opacity: isRecommendation ? 0.9 : 0.7,
-                                    symbol: isRecommendation ? 'diamond' : 'circle',
-                                    line: {
+                    marker: {
+                                size: isRecommendation ? 8 : 6,
+                                color: categoryPoints[0].color,
+                                opacity: isRecommendation ? 0.9 : 0.7,
+                                symbol: isRecommendation ? 'diamond' : 'circle',
+                        line: {
                                         color: '#000000',
                                         width: 0.5
                                     }
                                 },
-                                text: categoryPoints.map(p => formatHoverText(p)),
+                            text: categoryPoints.map(p => formatHoverText(p)),
                                 hoverinfo: 'text'
                             });
                         });
 
-                        const layout = {
+                const layout = {
                             title: '3D Embeddings Visualization',
-                            scene: {
-                                xaxis: {
+                    scene: {
+                        xaxis: {
                                     title: 'PC1',
                                     showgrid: true,
                                     zeroline: true,
                                     gridcolor: '#ddd'
-                                },
-                                yaxis: {
+                        },
+                        yaxis: {
                                     title: 'PC2',
                                     showgrid: true,
                                     zeroline: true,
                                     gridcolor: '#ddd'
-                                },
-                                zaxis: {
+                        },
+                        zaxis: {
                                     title: 'PC3',
                                     showgrid: true,
                                     zeroline: true,
                                     gridcolor: '#ddd'
-                                },
-                                camera: {
+                        },
+                        camera: {
                                     eye: {
                                         x: 1.5,
                                         y: 1.5,
                                         z: 1.5
                                     }
                                 }
-                            },
-                            margin: {
-                                l: 0,
-                                r: 0,
-                                t: 30,
+                    },
+                    margin: {
+                        l: 0,
+                        r: 0,
+                        t: 30,
                                 b: 0
-                            },
-                            showlegend: true,
-                            legend: {
+                    },
+                    showlegend: true,
+                    legend: {
                                 x: 1.1,
                                 y: 0.9,
                                 bgcolor: 'rgba(255, 255, 255, 0.8)'
                             }
-                        };
+                };
 
-                        const config = {
-                            responsive: true,
-                            displayModeBar: true,
-                            displaylogo: false,
+                const config = {
+                    responsive: true,
+                    displayModeBar: true,
+                    displaylogo: false,
                             modeBarButtonsToRemove: ['lasso2d', 'select2d'],
                             modeBarButtonsToAdd: [{
-                                name: 'Reset Camera',
+                            name: 'Reset Camera',
                                 icon: Plotly.Icons.camera,
-                                click: function(gd) {
-                                    Plotly.relayout(gd, {
+                            click: function(gd) {
+                                Plotly.relayout(gd, {
                                         'scene.camera': layout.scene.camera
                                     });
                                 }
                             }]
                         };
 
-                        Plotly.newPlot('embedding-plot', traces, layout, config);
+                Plotly.newPlot('embedding-plot', traces, layout, config);
 
                         // Update metadata display
-                        updateVisualizationMetadata(data.metadata);
+                    updateVisualizationMetadata(data.metadata);
                     } else {
-                        container.innerHTML = '<p>No data points available for visualization.</p>';
-                    }
-                })
-                .catch(error => {
-                    console.error('Error fetching embeddings visualization:', error);
-                    document.getElementById('embedding-plot').innerHTML = 
-                        '<p>Error loading visualization data.</p>';
-                });
+                    document.getElementById('embedding-plot').innerHTML = '<p>No data points available for visualization.</p>';
+                }
+
+                // Wait for the map to be fully rendered
+                const mapContainer = document.getElementById('embeddings-visualization');
+                if (mapContainer) {
+                    const observer = new MutationObserver((mutations, obs) => {
+                        if (mapContainer.children.length > 0) {
+                            loadingTasks.mapRendered.complete = true;
+                            updateLoadingState();
+                            obs.disconnect();
+                        }
+                    });
+                    observer.observe(mapContainer, { childList: true, subtree: true });
+                } else {
+                    loadingTasks.mapRendered.complete = true;
+                    updateLoadingState();
+                }
+            } catch (error) {
+                console.error('Error updating embeddings visualization:', error);
+                loadingTasks.embeddings.complete = true;
+                updateLoadingState();
+            }
         }
 
         // Helper function to format category names for display
@@ -1449,58 +1881,63 @@
 
         // Function to fetch latest Firebase query
         async function fetchLatestFirebaseQuery() {
-            console.log('Fetching latest Firebase query...');
-            const container = document.getElementById('queryContainer');
-            
             try {
                 const response = await fetch('/api/latest-firebase-query');
                 const data = await response.json();
                 
-                if (!response.ok) {
-                    throw new Error(`HTTP error! status: ${response.status}`);
-                }
-                
                 if (data.error) {
-                    container.innerHTML = `<div class="no-query">Error: ${data.error}</div>`;
+                    console.error('Error fetching Firebase query:', data.error);
+                    document.getElementById('query-text').textContent = `Error: ${data.error}`;
                     return;
                 }
                 
-                if (!data.query) {
-                    container.innerHTML = '<div class="no-query">No queries available</div>';
-                    return;
-                }
-                
+                const queryContainer = document.getElementById('latest-query-container');
+                const queryText = document.getElementById('query-text');
+                const queryTimestamp = document.getElementById('query-timestamp');
+                const queryStatus = document.getElementById('query-status');
+
+                // Remove any existing process buttons
+                const existingButtons = queryContainer.querySelectorAll('.process-btn');
+                existingButtons.forEach(button => button.remove());
+
+                if (data.query) {
                 const query = data.query;
-                console.log('Received query:', query);
+                    queryText.textContent = query.query || 'No query text';
+                    queryTimestamp.textContent = `Timestamp: ${formatTimestamp(query.timestamp)}`;
+                    queryStatus.textContent = `Status: ${query.processed ? 'Processed' : 'Pending'}`;
+                    
+                    if (!query.processed) {
+                        // Add single process button
+                        const processButton = document.createElement('button');
+                        processButton.className = 'process-btn';
+                        processButton.textContent = 'Process Query';
+                        processButton.onclick = () => processFirebaseQuery(query.id, query.query);
+                        queryContainer.appendChild(processButton);
+                    }
+                } else {
+                    queryText.textContent = 'No queries available';
+                    queryTimestamp.textContent = '';
+                    queryStatus.textContent = '';
+                }
                 
-                container.innerHTML = `
-                    <div class="query-box">
-                        <div class="query-text">${query.query || 'No query text'}</div>
-                        <div class="query-info">
-                            <span>Timestamp: ${formatTimestamp(query.timestamp)}</span>
-                            <span>Status: ${query.processed ? 'Processed' : 'Pending'}</span>
-                        </div>
-                        ${!query.processed ? `
-                            <button class="process-btn" onclick="processFirebaseQuery('${query.id}', '${query.query}')">
-                                Process Query
-                            </button>
-                        ` : ''}
-                </div>
-            `;
+                loadingTasks.firebaseQuery.complete = true;
+                updateLoadingState();
             } catch (error) {
                 console.error('Error fetching Firebase query:', error);
-                container.innerHTML = `<div class="no-query">Error fetching query: ${error.message}</div>`;
+                document.getElementById('query-text').textContent = `Error fetching query: ${error.message}`;
+                loadingTasks.firebaseQuery.complete = true;
+                updateLoadingState();
             }
         }
 
-        // Helper function to format timestamp
         function formatTimestamp(timestamp) {
             if (!timestamp) return 'N/A';
-            if (timestamp.seconds) {
-                // Handle Firestore timestamp
-                return new Date(timestamp.seconds * 1000).toLocaleString();
+            try {
+                const date = new Date(timestamp);
+                return date.toLocaleString();
+            } catch (e) {
+                return timestamp;
             }
-            return new Date(timestamp).toLocaleString();
         }
 
         // Function to fetch and display contexts
@@ -1548,8 +1985,8 @@
                     const healthContextContainer = document.getElementById('health-context-container');
                     
                     // Generate recommendations based on the context
-                    const recommendations = generateHealthAdvice(context);
-
+            const recommendations = generateHealthAdvice(context);
+            
                     // Create the health context HTML
                     healthContextContainer.innerHTML = `
                         <div class="latest-status">
@@ -1559,24 +1996,24 @@
                                 <p><strong>Exercise:</strong> ${context.exerciseMinutes || 'N/A'} minutes</p>
                                 <p><strong>Meal Type:</strong> ${context.mealType || 'N/A'}</p>
                                 <p><strong>Medication:</strong> ${context.medication || 'N/A'}</p>
-                            </div>
+                                </div>
                             <div class="notes">
                                 <p><strong>Notes:</strong></p>
                                 <p>${context.notes || 'No notes available'}</p>
                             </div>
-                            <div class="recommendations">
+                                <div class="recommendations">
                                 <h4>Recommendations:</h4>
-                                <ul>
-                                    ${recommendations.map(rec => `<li>${rec}</li>`).join('')}
-                                </ul>
+                                    <ul>
+                                        ${recommendations.map(rec => `<li>${rec}</li>`).join('')}
+                                    </ul>
                                 <div class="action-buttons">
                                     <button onclick="handleSendHealthRecommendation()" class="btn btn-primary">Send to Firebase</button>
                                     <button onclick="discardHealthRecommendations()" class="btn btn-secondary">Discard</button>
                                 </div>
-                            </div>
-                            <div id="health-send-status" class="mt-3"></div>
                         </div>
-                    `;
+                            <div id="health-send-status" class="mt-3"></div>
+                </div>
+            `;
 
                     // Store the context and recommendations in global variables
                     window.currentHealthContext = {
@@ -1594,6 +2031,9 @@
             } catch (error) {
                 console.error('Error fetching health context:', error);
                 document.getElementById('health-context-container').innerHTML = '<p>Error loading health context</p>';
+            } finally {
+                loadingTasks.healthContext.complete = true;
+                updateLoadingState();
             }
         }
 
@@ -1672,19 +2112,19 @@
                                 <p><strong>Notes:</strong></p>
                                 <p>${context.notes || 'No notes available'}</p>
                             </div>
-                            <div class="recommendations">
+                                <div class="recommendations">
                                 <h4>Recommendations:</h4>
-                                <ul>
-                                    ${recommendations.map(rec => `<li>${rec}</li>`).join('')}
-                                </ul>
+                                    <ul>
+                                        ${recommendations.map(rec => `<li>${rec}</li>`).join('')}
+                                    </ul>
                                 <div class="action-buttons">
                                     <button onclick="handleSendWorkRecommendation()" class="btn btn-primary">Send to Firebase</button>
                                     <button onclick="discardWorkRecommendations()" class="btn btn-secondary">Discard</button>
                                 </div>
-                            </div>
-                            <div id="send-status" class="mt-3"></div>
                         </div>
-                    `;
+                            <div id="send-status" class="mt-3"></div>
+                </div>
+            `;
 
                     // Store the context and recommendations in global variables
                     window.currentWorkContext = {
@@ -1703,6 +2143,9 @@
             } catch (error) {
                 console.error('Error fetching work context:', error);
                 document.getElementById('work-context-container').innerHTML = '<p>Error loading work context</p>';
+            } finally {
+                loadingTasks.workContext.complete = true;
+                updateLoadingState();
             }
         }
 
@@ -1776,8 +2219,8 @@
                     const commuteContextContainer = document.getElementById('commute-context-container');
                     
                     // Generate recommendations based on the context
-                    const recommendations = generateCommuteAdvice(context);
-
+            const recommendations = generateCommuteAdvice(context);
+            
                     // Create the commute context HTML
                     commuteContextContainer.innerHTML = `
                         <div class="latest-status">
@@ -1788,24 +2231,24 @@
                                 <p><strong>Duration:</strong> ${context.duration || 'N/A'} minutes</p>
                                 <p><strong>Transport Mode:</strong> ${context.transportMode || 'N/A'}</p>
                                 <p><strong>Traffic Condition:</strong> ${context.trafficCondition || 'N/A'}</p>
-                            </div>
+                        </div>
                             <div class="notes">
                                 <p><strong>Notes:</strong></p>
                                 <p>${context.notes || 'No notes available'}</p>
                             </div>
-                            <div class="recommendations">
+                                <div class="recommendations">
                                 <h4>Recommendations:</h4>
-                                <ul>
-                                    ${recommendations.map(rec => `<li>${rec}</li>`).join('')}
-                                </ul>
+                                    <ul>
+                                        ${recommendations.map(rec => `<li>${rec}</li>`).join('')}
+                                    </ul>
                                 <div class="action-buttons">
                                     <button onclick="handleSendCommuteRecommendation()" class="btn btn-primary">Send to Firebase</button>
                                     <button onclick="discardCommuteRecommendations()" class="btn btn-secondary">Discard</button>
                                 </div>
-                            </div>
-                            <div id="commute-send-status" class="mt-3"></div>
                         </div>
-                    `;
+                            <div id="commute-send-status" class="mt-3"></div>
+                </div>
+            `;
 
                     // Store the context and recommendations in global variables
                     window.currentCommuteContext = {
@@ -1824,6 +2267,9 @@
             } catch (error) {
                 console.error('Error fetching commute context:', error);
                 document.getElementById('commute-context-container').innerHTML = '<p>Error loading commute context</p>';
+            } finally {
+                loadingTasks.commuteContext.complete = true;
+                updateLoadingState();
             }
         }
 

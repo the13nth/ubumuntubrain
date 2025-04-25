@@ -213,45 +213,37 @@ def handle_websocket(ws):
         with ws_lock:
             ws_connections.remove(ws)
 
-def process_search_query(query):
+def process_search_query(query, context_type=None):
     """Process a search query and return the results."""
     # Generate query embedding
     query_embedding = model.encode(query).tolist()
     
-    # Search in ChromaDB
-    results = collection.query(
-        query_embeddings=[query_embedding],
-        n_results=10,  # Increased to get more relevant contexts
-        include=['embeddings', 'documents', 'metadatas', 'distances']
-    )
+    # Search in ChromaDB with context type filter if provided
+    if context_type:
+        results = collection.query(
+            query_embeddings=[query_embedding],
+            n_results=5,
+            where={"type": context_type},
+            include=['embeddings', 'documents', 'metadatas', 'distances']
+        )
+    else:
+        results = collection.query(
+            query_embeddings=[query_embedding],
+            n_results=5,
+            include=['embeddings', 'documents', 'metadatas', 'distances']
+        )
     
     # Make sure we have results
     if not results or 'documents' not in results or not results['documents'] or not results['documents'][0]:
         return {
-            "answer": "No documents found in the database.",
-            "query_embedding_visualization": {"x": 0, "y": 0, "z": 0}
+            "answer": f"No {context_type if context_type else ''} documents found in the database.",
+            "recommendations": []
         }
-    
-    # Get all embeddings including the query for PCA
-    all_data = collection.get(include=['embeddings'])
-    if not all_data or 'embeddings' not in all_data or not all_data['embeddings']:
-        return {
-            "answer": "No documents found in the database.",
-            "query_embedding_visualization": {"x": 0, "y": 0, "z": 0}
-        }
-    
-    # Process embeddings and get visualization data
-    visualization_data = process_embeddings_for_visualization(
-        all_data['embeddings'],
-        query_embedding,
-        results
-    )
     
     # Process matching contexts with relevance scores
     matching_contexts = []
     for i in range(len(results['documents'][0])):
-        # Convert distance to similarity score (1 - normalized_distance)
-        similarity = 1 - min(results['distances'][0][i], 1.0)  # Ensure distance is not > 1
+        similarity = 1 - min(results['distances'][0][i], 1.0)
         context_type = results['metadatas'][0][i].get('type', 'unknown')
         
         matching_contexts.append({
@@ -264,64 +256,172 @@ def process_search_query(query):
     # Sort contexts by relevance
     matching_contexts.sort(key=lambda x: x['relevance'], reverse=True)
     
-    # Generate answer using Gemini with all relevant contexts
+    # Generate answer and recommendations using Gemini
     context_texts = [ctx['text'] for ctx in matching_contexts]
-    answer = generate_answer(query, context_texts)
+    answer, recommendations = generate_context_recommendations(query, context_texts, context_type)
     
     return {
         "answer": answer,
-        "query_embedding_visualization": visualization_data["query_point"],
+        "recommendations": recommendations,
         "matching_contexts": matching_contexts
     }
 
-def process_embeddings_for_visualization(embeddings, query_embedding, results):
-    """Process embeddings for visualization."""
-    all_embeddings = np.array(embeddings)
-    combined_embeddings = np.vstack([all_embeddings, query_embedding])
+def generate_context_recommendations(query, context_texts, context_type):
+    """Generate context-specific recommendations using Gemini."""
+    if not context_texts:
+        return "No relevant information found.", []
     
-    # Apply PCA
-    n_samples = combined_embeddings.shape[0]
-    n_features = combined_embeddings.shape[1]
-    n_components = min(3, n_samples - 1, n_features)
-    
-    pca = PCA(n_components=n_components)
-    reduced_embeddings = pca.fit_transform(combined_embeddings)
-    
-    # Get query point and pad with zeros if needed
-    query_point = reduced_embeddings[-1]
-    query_coords = np.zeros(3)
-    for i in range(min(3, len(query_point))):
-        query_coords[i] = query_point[i]
-    
-    return {
-        "query_point": {
-            "x": float(query_coords[0]),
-            "y": float(query_coords[1]),
-            "z": float(query_coords[2])
-        }
+    context_prompts = {
+        "health": """You are a health advisor AI. Based on the following health contexts and query, provide:
+1. A brief analysis of the current health situation
+2. 3-5 specific health recommendations
+3. Any potential health concerns to watch for
+
+Health Contexts:
+{contexts}
+
+Query: {query}
+
+Format your response as:
+ANALYSIS: (brief situation analysis)
+RECOMMENDATIONS:
+- (recommendation 1)
+- (recommendation 2)
+- (recommendation 3)
+WATCH FOR:
+- (concern 1)
+- (concern 2)""",
+
+        "work": """You are a productivity advisor AI. Based on the following work contexts and query, provide:
+1. A brief analysis of the work situation
+2. 3-5 specific productivity recommendations
+3. Priority action items
+
+Work Contexts:
+{contexts}
+
+Query: {query}
+
+Format your response as:
+ANALYSIS: (brief situation analysis)
+RECOMMENDATIONS:
+- (recommendation 1)
+- (recommendation 2)
+- (recommendation 3)
+PRIORITIES:
+- (priority 1)
+- (priority 2)""",
+
+        "commute": """You are a commute optimization AI. Based on the following commute contexts and query, provide:
+1. A brief analysis of the commute situation
+2. 3-5 specific commute recommendations
+3. Alternative routes or modes to consider
+
+Commute Contexts:
+{contexts}
+
+Query: {query}
+
+Format your response as:
+ANALYSIS: (brief situation analysis)
+RECOMMENDATIONS:
+- (recommendation 1)
+- (recommendation 2)
+- (recommendation 3)
+ALTERNATIVES:
+- (alternative 1)
+- (alternative 2)"""
     }
 
-def generate_answer(query, context_texts):
-    """Generate an answer using Gemini with multiple contexts."""
-    if not context_texts:
-        return "I couldn't find any relevant information to answer your question."
-    
-    # Create a prompt that includes all relevant contexts
-    prompt = f"""You are a helpful AI assistant that answers questions based on the provided contexts. 
-Your answers should be:
-1. Accurate and based only on the provided contexts
-2. Clear and well-structured
-3. Include relevant quotes or references from the source contexts when appropriate
+    # Use default prompt if context_type not specified
+    if not context_type or context_type not in context_prompts:
+        prompt = f"""Based on the following contexts and query, provide:
+1. A brief analysis
+2. 3-5 specific recommendations
 
 Contexts:
 {chr(10).join([f"Context {i+1}:{chr(10)}{text}" for i, text in enumerate(context_texts)])}
 
-Question: {query}
+Query: {query}"""
+    else:
+        prompt = context_prompts[context_type].format(
+            contexts=chr(10).join([f"Context {i+1}:{chr(10)}{text}" for i, text in enumerate(context_texts)]),
+            query=query
+        )
 
-Please provide a comprehensive answer based on the above contexts. If the contexts don't contain enough information to answer the question fully, please state that explicitly."""
+    try:
+        response = model_gemini.generate_content(prompt)
+        if not response.text:
+            return "Could not generate recommendations.", []
 
-    response = model_gemini.generate_content(prompt)
-    return response.text if response.text else "I couldn't generate a response based on the contexts."
+        # Parse recommendations from the response
+        text = response.text
+        recommendations = []
+        
+        # Extract recommendations section
+        if "RECOMMENDATIONS:" in text:
+            rec_section = text.split("RECOMMENDATIONS:")[1].split("\n")
+            recommendations = [r.strip("- ").strip() for r in rec_section if r.strip().startswith("-")]
+        
+        return text, recommendations
+    except Exception as e:
+        print(f"Error generating recommendations: {str(e)}")
+        return f"Error generating recommendations: {str(e)}", []
+
+@app.route('/api/process-contexts', methods=['POST'])
+def process_contexts():
+    """Process all available contexts and generate recommendations."""
+    try:
+        results = {
+            "health": {"contexts": [], "recommendations": []},
+            "work": {"contexts": [], "recommendations": []},
+            "commute": {"contexts": [], "recommendations": []}
+        }
+        
+        # Process health contexts
+        health_contexts = db.collection('health_context').order_by('created_at', direction=firestore.Query.DESCENDING).limit(3).get()
+        for doc in health_contexts:
+            context = doc.to_dict()
+            query = f"Health status with blood sugar {context.get('bloodSugar')}, exercise {context.get('exerciseMinutes')} minutes"
+            result = process_search_query(query, "health")
+            results["health"]["contexts"].append({
+                "id": doc.id,
+                "data": context,
+                "analysis": result["answer"],
+                "recommendations": result["recommendations"]
+            })
+        
+        # Process work contexts
+        work_contexts = db.collection('work_context').order_by('created_at', direction=firestore.Query.DESCENDING).limit(3).get()
+        for doc in work_contexts:
+            context = doc.to_dict()
+            query = f"Work task {context.get('taskName')} with priority {context.get('priority')} and status {context.get('status')}"
+            result = process_search_query(query, "work")
+            results["work"]["contexts"].append({
+                "id": doc.id,
+                "data": context,
+                "analysis": result["answer"],
+                "recommendations": result["recommendations"]
+            })
+        
+        # Process commute contexts
+        commute_contexts = db.collection('commute_context').order_by('created_at', direction=firestore.Query.DESCENDING).limit(3).get()
+        for doc in commute_contexts:
+            context = doc.to_dict()
+            query = f"Commute from {context.get('startLocation')} to {context.get('endLocation')} with {context.get('transportMode')}"
+            result = process_search_query(query, "commute")
+            results["commute"]["contexts"].append({
+                "id": doc.id,
+                "data": context,
+                "analysis": result["answer"],
+                "recommendations": result["recommendations"]
+            })
+        
+        return jsonify(results)
+        
+    except Exception as e:
+        print(f"Error processing contexts: {str(e)}")
+        return jsonify({"error": str(e)}), 500
 
 # Update the existing search endpoint to use the new processing functions
 @app.route('/api/search', methods=['POST'])
@@ -329,11 +429,12 @@ def search():
     try:
         data = request.json
         query = data.get('query')
+        context_type = data.get('context_type')  # Optional context type filter
         
         if not query:
             return jsonify({"error": "No query provided"}), 400
         
-        result = process_search_query(query)
+        result = process_search_query(query, context_type)
         return jsonify(result)
     except Exception as e:
         print(f"Error in search: {str(e)}")
@@ -440,81 +541,50 @@ def upload_file():
 @app.route('/api/data')
 def get_data():
     try:
-        print("Fetching data from ChromaDB...")
-        # Get all data from ChromaDB with embeddings included
-        data = collection.get(include=['embeddings', 'documents', 'metadatas'])
-        print(f"Retrieved {len(data['ids'] if 'ids' in data else [])} documents from ChromaDB")
+        print("Fetching data from all sources...")
         
-        # If there's no data, return an empty list
-        if not data or 'ids' not in data:
-            print("No data found in ChromaDB")
-            return jsonify([])
-        
-        # Format the data for the table
+        # Get all data from ChromaDB
+        data = collection.get(include=['documents', 'metadatas', 'ids'])
         formatted_data = []
-        for i in range(len(data['ids'])):
-            formatted_data.append({
-                'id': data['ids'][i],
-                'document': data['documents'][i][:100] + '...' if len(data['documents'][i]) > 100 else data['documents'][i],
-                'embedding_size': len(data['embeddings'][i]),
-                'source': data.get('metadatas', [{}])[i].get('source', 'Manual Input') if data.get('metadatas') else 'Manual Input'
-            })
         
-        print(f"Formatted {len(formatted_data)} documents for display")
+        # Check if we have any data
+        if data and 'ids' in data and data['ids']:
+            for i in range(len(data['ids'])):
+                doc_text = data['documents'][i]
+                metadata = data['metadatas'][i]
+                
+                # Format document text (truncate if needed)
+                display_text = doc_text[:100] + '...' if len(doc_text) > 100 else doc_text
+                
+                formatted_data.append({
+                    'id': data['ids'][i],
+                    'document': display_text,
+                    'full_text': doc_text,
+                    'type': metadata.get('type', 'undefined'),
+                    'source': metadata.get('source', 'Manual Input'),
+                    'created_at': metadata.get('created_at', ''),
+                    'metadata': metadata
+                })
+        
+        print(f"Formatted {len(formatted_data)} total documents for display")
         return jsonify(formatted_data)
     except Exception as e:
         print(f"Error in get_data: {str(e)}")
-        return jsonify([]), 500
+        traceback.print_exc()
+        return jsonify([])  # Return empty array instead of error
 
 @app.route('/api/embeddings-visualization')
 def get_embeddings_visualization():
-    """Get embeddings visualization data with improved 3D visualization"""
+    """Get embeddings visualization data with improved 3D visualization including processed contexts"""
     try:
         # Get all data from ChromaDB with embeddings included
         data = collection.get(include=['embeddings', 'documents', 'metadatas'])
         
-        # Get recommendations from Firebase
-        recommendations = []
-        if db is not None:
-            try:
-                # Get health recommendations
-                health_recs = db.collection('health_ai_recommendation').order_by('created_at', direction=firestore.Query.DESCENDING).limit(10).get()
-                for rec in health_recs:
-                    rec_data = rec.to_dict()
-                    text = f"Health Recommendation: Blood Sugar {rec_data.get('bloodSugar')}, Exercise {rec_data.get('exerciseMinutes')} mins, Recommendations: {', '.join(rec_data.get('recommendations', []))}"
-                    recommendations.append({
-                        'text': text,
-                        'type': 'health_recommendation',
-                        'source': 'AI Recommendation',
-                        'id': rec.id
-                    })
-
-                # Get work recommendations
-                work_recs = db.collection('work_ai_recommendation').order_by('created_at', direction=firestore.Query.DESCENDING).limit(10).get()
-                for rec in work_recs:
-                    rec_data = rec.to_dict()
-                    text = f"Work Recommendation: Task {rec_data.get('taskName')}, Status {rec_data.get('status')}, Priority {rec_data.get('priority')}, Recommendations: {', '.join(rec_data.get('recommendations', []))}"
-                    recommendations.append({
-                        'text': text,
-                        'type': 'work_recommendation',
-                        'source': 'AI Recommendation',
-                        'id': rec.id
-                    })
-
-                # Get commute recommendations
-                commute_recs = db.collection('commute_ai_recommendation').order_by('created_at', direction=firestore.Query.DESCENDING).limit(10).get()
-                for rec in commute_recs:
-                    rec_data = rec.to_dict()
-                    text = f"Commute Recommendation: From {rec_data.get('startLocation')} to {rec_data.get('endLocation')}, Mode {rec_data.get('transportMode')}, Recommendations: {', '.join(rec_data.get('recommendations', []))}"
-                    recommendations.append({
-                        'text': text,
-                        'type': 'commute_recommendation',
-                        'source': 'AI Recommendation',
-                        'id': rec.id
-                    })
-
-            except Exception as e:
-                print(f"Error fetching recommendations: {str(e)}")
+        # Only process and embed Firebase contexts if we have no data or very few documents
+        if not data or 'ids' not in data or len(data['ids']) < 5:
+            process_and_embed_firebase_contexts()
+            # Get updated data after processing
+            data = collection.get(include=['embeddings', 'documents', 'metadatas'])
 
         # If there's no data or no embeddings, return empty visualization
         if not data or 'embeddings' not in data or not data['embeddings']:
@@ -528,28 +598,8 @@ def get_embeddings_visualization():
                 }
             })
 
-        # Add recommendation embeddings
-        all_embeddings = data['embeddings']
-        all_documents = data['documents']
-        all_metadatas = data['metadatas']
-
-        # Generate embeddings for recommendations
-        for rec in recommendations:
-            try:
-                rec_embedding = model.encode(rec['text']).tolist()
-                all_embeddings.append(rec_embedding)
-                all_documents.append(rec['text'])
-                all_metadatas.append({
-                    'type': rec['type'],
-                    'source': rec['source'],
-                    'id': rec['id']
-                })
-            except Exception as e:
-                print(f"Error encoding recommendation: {str(e)}")
-                continue
-
         # Convert embeddings to numpy array
-        embeddings = np.array(all_embeddings)
+        embeddings = np.array(data['embeddings'])
         
         # Determine number of components based on data size
         n_samples = embeddings.shape[0]
@@ -587,7 +637,7 @@ def get_embeddings_visualization():
         
         for i in range(len(coords_3d)):
             # Get metadata for this point
-            metadata = all_metadatas[i]
+            metadata = data['metadatas'][i]
             doc_type = metadata.get('type', 'unknown')
             source = metadata.get('source', 'unknown')
             
@@ -600,12 +650,12 @@ def get_embeddings_visualization():
                 'x': float(coords_3d[i, 0]),
                 'y': float(coords_3d[i, 1]),
                 'z': float(coords_3d[i, 2]),
-                'text': all_documents[i][:200] + '...' if len(all_documents[i]) > 200 else all_documents[i],
+                'text': data['documents'][i][:200] + '...' if len(data['documents'][i]) > 200 else data['documents'][i],
                 'source': source,
                 'type': doc_type,
                 'id': metadata.get('id', f'doc_{i}'),
-                'size': 5,  # Default size
-                'color': get_point_color(doc_type)  # Get color based on document type
+                'size': get_point_size(doc_type),
+                'color': get_point_color(doc_type)
             }
             points.append(point_data)
         
@@ -646,19 +696,34 @@ def get_embeddings_visualization():
         }), 500
 
 def get_point_color(doc_type):
-    """Get color for different document types"""
+    """Get color for different document types with improved visibility"""
     color_map = {
-        'query': '#FF0000',  # Red for queries
-        'health': '#00FF00',  # Green for health context
-        'work': '#0000FF',   # Blue for work context
-        'commute': '#FFA500', # Orange for commute context
-        'layout': '#800080',  # Purple for layout data
-        'health_recommendation': '#90EE90',  # Light green for health recommendations
-        'work_recommendation': '#87CEEB',    # Light blue for work recommendations
-        'commute_recommendation': '#FFB6C1',  # Light pink for commute recommendations
-        'unknown': '#808080'  # Gray for unknown types
+        'health_context': '#00CC00',          # Brighter green
+        'work_context': '#0066FF',            # Brighter blue
+        'commute_context': '#FF6600',         # Brighter orange
+        'health_recommendation': '#66FF66',    # Lighter bright green
+        'work_recommendation': '#66B2FF',      # Lighter bright blue
+        'commute_recommendation': '#FFB366',   # Lighter bright orange
+        'query': '#FF0000',                   # Bright red
+        'response': '#9933FF',                # Bright purple
+        'unknown': '#999999'                  # Lighter gray
     }
     return color_map.get(doc_type, color_map['unknown'])
+
+def get_point_size(doc_type):
+    """Get size for different point types"""
+    size_map = {
+        'health_context': 8,
+        'work_context': 8,
+        'commute_context': 8,
+        'health_recommendation': 10,
+        'work_recommendation': 10,
+        'commute_recommendation': 10,
+        'query': 12,
+        'response': 12,
+        'unknown': 6
+    }
+    return size_map.get(doc_type, size_map['unknown'])
 
 def create_rag_prompt(query, relevant_docs):
     # Check if this is a dashboard layout optimization request
@@ -882,136 +947,99 @@ def submit_firebase_query():
         print(f"Error processing Firebase query: {str(e)}")
         return jsonify({"error": str(e)}), 500
 
-@app.route('/api/latest-firebase-query')
+@app.route('/api/latest-firebase-query', methods=['GET'])
 def latest_firebase_query():
-    """API endpoint to fetch the latest query from Firebase and local storage"""
     try:
-        # First try to get from local storage
+        # Try local storage first
         local_data = get_from_local_db('query')
         if local_data:
-            return jsonify({"query": local_data})
-        
-        # If not in local storage, get from Firebase
-        if db is None:
-            return jsonify({"error": "Firebase not initialized"}), 500
-        
-        queries_ref = db.collection('rag_queries')
-        query = queries_ref.order_by('timestamp', direction=firestore.Query.DESCENDING).limit(1).get()
-        
-        latest_query = None
-        for doc in query:
-            query_data = doc.to_dict()
-            if 'timestamp' in query_data and query_data['timestamp']:
-                query_data['timestamp'] = query_data['timestamp'].strftime('%Y-%m-%d %H:%M:%S')
-            query_data['id'] = doc.id
-            latest_query = query_data
-            break
-        
-        # Save to local storage
-        if latest_query:
-            save_to_local_db('query', latest_query)
+            return jsonify({'query': local_data})
             
-            # Add to embeddings
-            add_to_embeddings(
-                latest_query['query'],
-                {"source": "Firebase Query", "type": "query", "id": latest_query['id']}
-            )
+        # Check if Firebase is initialized
+        if not db:
+            raise Exception("Firebase database not initialized")
+            
+        # Query Firebase
+        query_ref = db.collection('rag_queries').order_by('timestamp', direction=firestore.Query.DESCENDING).limit(1)
+        docs = query_ref.get()
         
-        return jsonify({"query": latest_query})
+        if not docs:
+            return jsonify({'query': None})
+            
+        query_data = docs[0].to_dict()
+        query_data['id'] = docs[0].id
+        
+        # Save to local storage for quick access
+        save_to_local_db('query', query_data)
+        
+        return jsonify({'query': query_data})
     
     except Exception as e:
-        print(f"Error fetching from Firebase: {str(e)}")
-        return jsonify({"error": str(e)}), 500
+        app.logger.error(f"Error fetching latest query: {str(e)}")
+        return jsonify({'error': str(e)}), 500
 
-@app.route('/api/latest-health-context')
-def get_latest_health_context():
+@app.route('/api/latest-health-context', methods=['GET'])
+def latest_health_context():
     try:
-        # Get all health contexts from Firebase
-        health_ref = db.collection('health_context').order_by('created_at', direction=firestore.Query.DESCENDING)
-        docs = health_ref.get()
+        if not db:
+            raise Exception("Firebase database not initialized")
+            
+        context_ref = db.collection('health_contexts').order_by('timestamp', direction=firestore.Query.DESCENDING).limit(1)
+        docs = context_ref.get()
         
-        contexts = []
-        for doc in docs:
-            context_data = doc.to_dict()
-            context_data['id'] = doc.id
+        if not docs:
+            return jsonify({'context': None})
             
-            # Save to local DB
-            save_to_local_db('health_context', context_data)
-            
-            # Add to embeddings only if new
-            context_text = f"Health Context: Blood Sugar {context_data.get('bloodSugar')}, Exercise {context_data.get('exerciseMinutes')} mins, Meal: {context_data.get('mealType')}, Medication: {context_data.get('medication')}, Notes: {context_data.get('notes', '')}"
-            add_to_embeddings(context_text, {
-                "id": doc.id,
-                "type": "Health Context",
-                "source": "Firebase"
-            })
-            
-            contexts.append(context_data)
-            
-        return jsonify({"health_contexts": contexts})
+        context_data = docs[0].to_dict()
+        context_data['id'] = docs[0].id
+        
+        return jsonify({'context': context_data})
             
     except Exception as e:
-        return jsonify({"error": str(e)})
+        app.logger.error(f"Error fetching health context: {str(e)}")
+        return jsonify({'error': str(e)}), 500
 
-@app.route('/api/latest-work-context')
-def get_latest_work_context():
+@app.route('/api/latest-work-context', methods=['GET'])
+def latest_work_context():
     try:
-        # Get all work contexts from Firebase
-        work_ref = db.collection('work_context').order_by('created_at', direction=firestore.Query.DESCENDING)
-        docs = work_ref.get()
+        if not db:
+            raise Exception("Firebase database not initialized")
+            
+        context_ref = db.collection('work_contexts').order_by('timestamp', direction=firestore.Query.DESCENDING).limit(1)
+        docs = context_ref.get()
         
-        contexts = []
-        for doc in docs:
-            context_data = doc.to_dict()
-            context_data['id'] = doc.id
+        if not docs:
+            return jsonify({'context': None})
             
-            # Save to local DB
-            save_to_local_db('work_context', context_data)
-            
-            # Add to embeddings only if new
-            context_text = f"Work Context: Task {context_data.get('taskName')}, Status {context_data.get('status')}, Priority {context_data.get('priority')}, Deadline {context_data.get('deadline')}, Team: {context_data.get('collaborators')}"
-            add_to_embeddings(context_text, {
-                "id": doc.id,
-                "type": "Work Context",
-                "source": "Firebase"
-            })
-            
-            contexts.append(context_data)
-            
-        return jsonify({"work_contexts": contexts})
+        context_data = docs[0].to_dict()
+        context_data['id'] = docs[0].id
+        
+        return jsonify({'context': context_data})
             
     except Exception as e:
-        return jsonify({"error": str(e)})
+        app.logger.error(f"Error fetching work context: {str(e)}")
+        return jsonify({'error': str(e)}), 500
 
-@app.route('/api/latest-commute-context')
-def get_latest_commute_context():
+@app.route('/api/latest-commute-context', methods=['GET'])
+def latest_commute_context():
     try:
-        # Get all commute contexts from Firebase
-        commute_ref = db.collection('commute_context').order_by('created_at', direction=firestore.Query.DESCENDING)
-        docs = commute_ref.get()
+        if not db:
+            raise Exception("Firebase database not initialized")
+            
+        context_ref = db.collection('commute_contexts').order_by('timestamp', direction=firestore.Query.DESCENDING).limit(1)
+        docs = context_ref.get()
         
-        contexts = []
-        for doc in docs:
-            context_data = doc.to_dict()
-            context_data['id'] = doc.id
+        if not docs:
+            return jsonify({'context': None})
             
-            # Save to local DB
-            save_to_local_db('commute_context', context_data)
-            
-            # Add to embeddings only if new
-            context_text = f"Commute Context: From {context_data.get('startLocation')} to {context_data.get('endLocation')}, Mode: {context_data.get('transportMode')}, Duration: {context_data.get('duration')} mins, Traffic: {context_data.get('trafficCondition')}, Notes: {context_data.get('notes', '')}"
-            add_to_embeddings(context_text, {
-                "id": doc.id,
-                "type": "Commute Context",
-                "source": "Firebase"
-            })
-            
-            contexts.append(context_data)
-            
-        return jsonify({"commute_contexts": contexts})
+        context_data = docs[0].to_dict()
+        context_data['id'] = docs[0].id
+        
+        return jsonify({'context': context_data})
             
     except Exception as e:
-        return jsonify({"error": str(e)})
+        app.logger.error(f"Error fetching commute context: {str(e)}")
+        return jsonify({'error': str(e)}), 500
 
 def generate_layout_response(doc_ref, dashboard_context, raw_response, parsed_json):
     """Helper function to generate formatted layout response and update Firebase"""
@@ -1264,7 +1292,7 @@ def sync_local_recommendations_with_firebase():
 
 @app.route('/api/save-work-recommendations', methods=['POST'])
 def save_work_recommendations():
-    """Save AI-generated work recommendations to Firebase"""
+    """Save AI-generated work recommendations to Firebase and embed in RAG"""
     print("Received request to save work recommendations")
     
     if db is None:
@@ -1294,10 +1322,11 @@ def save_work_recommendations():
             'query_id': data.get('query_id'),
             'work_context_id': data.get('work_context_id'),
             'timestamp': firestore.SERVER_TIMESTAMP,
-            'created_at': firestore.SERVER_TIMESTAMP  # Force server timestamp
+            'created_at': firestore.SERVER_TIMESTAMP
         }
         
         # First, try to update existing document if work_context_id exists
+        doc_id = None
         if data.get('work_context_id'):
             # Query for existing recommendation with same work_context_id
             existing_docs = recommendations_ref.where('work_context_id', '==', data['work_context_id']).limit(1).get()
@@ -1305,31 +1334,30 @@ def save_work_recommendations():
             for doc in existing_docs:
                 # Update existing document
                 doc.reference.update(recommendation_data)
-                print(f"Updated existing recommendation document with ID: {doc.id}")
-                return jsonify({
-                    "success": True,
-                    "message": "Work recommendations updated successfully",
-                    "recommendation_id": doc.id
-                })
+                doc_id = doc.id
+                print(f"Updated existing recommendation document with ID: {doc_id}")
+                break
         
         # If no existing document found or no work_context_id, create new document
-        doc_ref = recommendations_ref.add(recommendation_data)
-        print(f"Created new recommendation document with ID: {doc_ref[1].id}")
+        if not doc_id:
+            doc_ref = recommendations_ref.add(recommendation_data)
+            doc_id = doc_ref[1].id
+            print(f"Created new recommendation document with ID: {doc_id}")
         
-        # Verify the document was saved
-        saved_doc = doc_ref[1].get()
-        if not saved_doc.exists:
-            raise Exception("Document was not saved to Firebase")
-            
-        print(f"Verified document exists in Firebase with data: {saved_doc.to_dict()}")
-        
-        # Sync all local recommendations with Firebase
-        sync_local_recommendations_with_firebase()
+        # Embed in RAG
+        text = f"Work Recommendation: {', '.join(data.get('recommendations', []))}"
+        metadata = {
+            'id': doc_id,
+            'type': 'work_recommendation',
+            'source': 'AI Recommendation',
+            'created_at': firestore.SERVER_TIMESTAMP
+        }
+        embed_context_in_rag(text, metadata)
         
         return jsonify({
             "success": True,
             "message": "Work recommendations saved successfully",
-            "recommendation_id": doc_ref[1].id
+            "recommendation_id": doc_id
         })
     except Exception as e:
         error_msg = f"Error saving work recommendations: {str(e)}"
@@ -1339,7 +1367,7 @@ def save_work_recommendations():
 
 @app.route('/api/save-commute-recommendations', methods=['POST'])
 def save_commute_recommendations():
-    """Save AI-generated commute recommendations to Firebase"""
+    """Save AI-generated commute recommendations to Firebase and embed in RAG"""
     if db is None:
         return jsonify({"error": "Firebase not initialized"}), 500
     
@@ -1359,7 +1387,7 @@ def save_commute_recommendations():
             'duration': data.get('duration'),
             'trafficCondition': data.get('trafficCondition'),
             'transportMode': data.get('transportMode'),
-            'notes': data.get('notes'),
+            'notes': data.get('notes', ''),
             'query_id': data.get('query_id'),
             'commute_context_id': data.get('commute_context_id'),
             'timestamp': firestore.SERVER_TIMESTAMP,
@@ -1368,16 +1396,79 @@ def save_commute_recommendations():
         
         # Add the document to the collection
         doc_ref = recommendations_ref.add(recommendation_data)
-        print(f"Successfully saved commute recommendations to commute_ai_recommendation collection with ID: {doc_ref[1].id}")
+        doc_id = doc_ref[1].id
+        print(f"Successfully saved commute recommendations to commute_ai_recommendation collection with ID: {doc_id}")
+        
+        # Embed in RAG
+        text = f"Commute Recommendation: {', '.join(data.get('recommendations', []))}"
+        metadata = {
+            'id': doc_id,
+            'type': 'commute_recommendation',
+            'source': 'AI Recommendation',
+            'created_at': firestore.SERVER_TIMESTAMP
+        }
+        embed_context_in_rag(text, metadata)
         
         return jsonify({
             "success": True,
             "message": "Commute recommendations saved successfully",
-            "recommendation_id": doc_ref[1].id
+            "recommendation_id": doc_id
         })
     except Exception as e:
         print(f"Error saving commute recommendations: {str(e)}")
         return jsonify({"error": f"Error saving commute recommendations: {str(e)}"}), 500
+
+@app.route('/api/save-health-recommendations', methods=['POST'])
+def save_health_recommendations():
+    """Save AI-generated health recommendations to Firebase and embed in RAG"""
+    if db is None:
+        return jsonify({"error": "Firebase not initialized"}), 500
+    
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({"error": "No data provided"}), 400
+            
+        # Create a new document in the health_ai_recommendation collection
+        recommendations_ref = db.collection('health_ai_recommendation')
+        
+        # Prepare the data to be saved
+        recommendation_data = {
+            'recommendations': data.get('recommendations', []),
+            'bloodSugar': data.get('bloodSugar'),
+            'exerciseMinutes': data.get('exerciseMinutes'),
+            'mealType': data.get('mealType'),
+            'medication': data.get('medication'),
+            'status': data.get('status'),
+            'query_id': data.get('query_id'),
+            'health_context_id': data.get('health_context_id'),
+            'timestamp': firestore.SERVER_TIMESTAMP,
+            'created_at': data.get('created_at') or firestore.SERVER_TIMESTAMP
+        }
+        
+        # Add the document to the collection
+        doc_ref = recommendations_ref.add(recommendation_data)
+        doc_id = doc_ref[1].id
+        print(f"Successfully saved recommendations to health_ai_recommendation collection with ID: {doc_id}")
+        
+        # Embed in RAG
+        text = f"Health Recommendation: {', '.join(data.get('recommendations', []))}"
+        metadata = {
+            'id': doc_id,
+            'type': 'health_recommendation',
+            'source': 'AI Recommendation',
+            'created_at': firestore.SERVER_TIMESTAMP
+        }
+        embed_context_in_rag(text, metadata)
+        
+        return jsonify({
+            "success": True,
+            "message": "Recommendations saved successfully",
+            "recommendation_id": doc_id
+        })
+    except Exception as e:
+        print(f"Error saving recommendations: {str(e)}")
+        return jsonify({"error": f"Error saving recommendations: {str(e)}"}), 500
 
 # Initialize SQLite database
 def init_db():
@@ -1724,6 +1815,487 @@ def send_commute_recommendation():
         print(f"Error details: {error_msg}")
         print(f"Stack trace: {traceback.format_exc()}")
         return jsonify({"error": error_msg}), 500
+
+@app.route('/api/create-context', methods=['POST'])
+def create_context():
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({"error": "No data provided"}), 400
+
+        required_fields = ['name', 'type', 'description']
+        missing_fields = [field for field in required_fields if not data.get(field)]
+        if missing_fields:
+            return jsonify({"error": f"Missing required fields: {', '.join(missing_fields)}"}), 400
+
+        # Create context document
+        context_data = {
+            'name': data['name'],
+            'type': data['type'],
+            'description': data['description'],
+            'tools': data.get('tools', []),
+            'isPublic': data.get('isPublic', False),
+            'created_at': firestore.SERVER_TIMESTAMP
+        }
+
+        # Add to Firestore
+        doc_ref = db.collection('contexts').add(context_data)
+        
+        return jsonify({
+            "success": True,
+            "message": "Context created successfully",
+            "context_id": doc_ref[1].id
+        })
+
+    except Exception as e:
+        print(f"Error creating context: {str(e)}")
+        return jsonify({"error": f"Error creating context: {str(e)}"}), 500
+
+@app.route('/api/create-tool', methods=['POST'])
+def create_tool():
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({"error": "No data provided"}), 400
+
+        # Check required fields
+        if not data.get('name') or not data.get('description'):
+            return jsonify({"error": "Tool name and description are required"}), 400
+
+        # Generate tool implementation using Gemini
+        prompt = f"""Create a Python tool implementation based on this description:
+"{data['description']}"
+
+The implementation should include:
+1. A clear docstring explaining the tool's purpose, parameters, and return value
+2. Type hints for all parameters and return values
+3. A Pydantic BaseModel for argument validation (if needed)
+4. Proper error handling
+5. The actual function implementation
+
+Format the response as a JSON object with these fields:
+{{
+    "function": "the complete function implementation",
+    "schema": "the Pydantic schema if needed, otherwise empty string",
+    "return_direct": boolean indicating if the function returns a simple value
+}}
+
+Example format:
+{{
+    "function": "def calculate_average(numbers: List[float]) -> float:\\n    \\"\\"\\"Calculate the average of a list of numbers.\\n...\\"\\"\\"\\"",
+    "schema": "class CalculateAverageInput(BaseModel):\\n    numbers: List[float]",
+    "return_direct": true
+}}"""
+
+        # Get implementation from Gemini
+        response = model_gemini.generate_content(prompt)
+        if not response.text:
+            return jsonify({"error": "Failed to generate tool implementation"}), 500
+
+        try:
+            # Parse the generated JSON
+            import json
+            implementation = json.loads(response.text)
+        except json.JSONDecodeError:
+            # If not valid JSON, try to extract it from the text
+            import re
+            json_match = re.search(r'({[\s\S]*})', response.text)
+            if json_match:
+                implementation = json.loads(json_match.group(1))
+            else:
+                return jsonify({"error": "Invalid implementation format"}), 500
+
+        # Create tool document
+        tool_data = {
+            'name': data['name'],
+            'description': data['description'],
+            'function': implementation['function'],
+            'schema': implementation.get('schema', ''),
+            'return_direct': implementation.get('return_direct', False),
+            'created_at': firestore.SERVER_TIMESTAMP
+        }
+
+        # Add to Firestore
+        doc_ref = db.collection('tools').add(tool_data)
+        
+        return jsonify({
+            "success": True,
+            "message": "Tool created successfully",
+            "tool_id": doc_ref[1].id,
+            "implementation": implementation
+        })
+
+    except Exception as e:
+        print(f"Error creating tool: {str(e)}")
+        return jsonify({"error": f"Error creating tool: {str(e)}"}), 500
+
+@app.route('/api/tools')
+def get_tools():
+    """Get all tools from Firebase"""
+    try:
+        if db is None:
+            return jsonify({"error": "Firebase not initialized"}), 500
+            
+        # Get all tools from Firebase
+        tools_ref = db.collection('tools').order_by('created_at', direction=firestore.Query.DESCENDING)
+        docs = tools_ref.get()
+        
+        tools = []
+        for doc in docs:
+            tool_data = doc.to_dict()
+            tool_data['id'] = doc.id
+            # Convert timestamp to string
+            if 'created_at' in tool_data and tool_data['created_at']:
+                tool_data['created_at'] = tool_data['created_at'].strftime('%Y-%m-%d %H:%M:%S')
+            tools.append(tool_data)
+            
+        return jsonify({"tools": tools})
+            
+    except Exception as e:
+        print(f"Error fetching tools: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+# Add after the init_db() function
+
+def embed_context_in_rag(text, metadata):
+    """Embed a context into the RAG system using ChromaDB"""
+    try:
+        # Generate a unique ID based on the context type and Firebase ID
+        doc_id = f"{metadata['type']}_{metadata['id']}"
+        
+        # Check if this exact document already exists
+        existing = collection.get(
+            ids=[doc_id],
+            include=["documents", "metadatas"]
+        )
+        
+        # If document exists and content hasn't changed, skip embedding
+        if existing and len(existing['ids']) > 0:
+            existing_text = existing['documents'][0]
+            existing_metadata = existing['metadatas'][0]
+            
+            # Only update if the content or metadata has changed
+            if existing_text == text and existing_metadata == metadata:
+                print(f"Skipping existing unchanged {metadata['type']} embedding for ID: {metadata['id']}")
+                return True
+        
+        # Generate embedding only if document is new or has changed
+        embedding = model.encode(text).tolist()
+        
+        if existing and len(existing['ids']) > 0:
+            # Update existing embedding
+            collection.update(
+                ids=[doc_id],
+                embeddings=[embedding],
+                documents=[text],
+                metadatas=[metadata]
+            )
+            print(f"Updated changed {metadata['type']} embedding for ID: {metadata['id']}")
+        else:
+            # Add new embedding
+            collection.add(
+                ids=[doc_id],
+                embeddings=[embedding],
+                documents=[text],
+                metadatas=[metadata]
+            )
+            print(f"Added new {metadata['type']} embedding for ID: {metadata['id']}")
+        
+        return True
+    except Exception as e:
+        print(f"Error embedding context in RAG: {str(e)}")
+        return False
+
+def process_and_embed_firebase_contexts():
+    """Fetch contexts from Firebase and embed them in the RAG system"""
+    if not db:
+        print("Firebase not initialized")
+        return
+    
+    try:
+        # Process health contexts
+        health_contexts = db.collection('health_context').order_by('created_at', direction=firestore.Query.DESCENDING).limit(5).get()
+        for doc in health_contexts:
+            ctx_data = doc.to_dict()
+            text = f"Health Context: Blood Sugar {ctx_data.get('bloodSugar')}, Exercise {ctx_data.get('exerciseMinutes')} mins"
+            metadata = {
+                'id': doc.id,
+                'type': 'health_context',
+                'source': 'Firebase',
+                'created_at': ctx_data.get('created_at', firestore.SERVER_TIMESTAMP)
+            }
+            embed_context_in_rag(text, metadata)
+        
+        # Process health recommendations
+        health_recs = db.collection('health_ai_recommendation').order_by('created_at', direction=firestore.Query.DESCENDING).limit(5).get()
+        for doc in health_recs:
+            rec_data = doc.to_dict()
+            text = f"Health Recommendation: {', '.join(rec_data.get('recommendations', []))}"
+            metadata = {
+                'id': doc.id,
+                'type': 'health_recommendation',
+                'source': 'AI Recommendation',
+                'created_at': rec_data.get('created_at', firestore.SERVER_TIMESTAMP)
+            }
+            embed_context_in_rag(text, metadata)
+        
+        # Process work contexts
+        work_contexts = db.collection('work_context').order_by('created_at', direction=firestore.Query.DESCENDING).limit(5).get()
+        for doc in work_contexts:
+            ctx_data = doc.to_dict()
+            text = f"Work Context: Task {ctx_data.get('taskName')}, Priority {ctx_data.get('priority')}, Status {ctx_data.get('status')}"
+            metadata = {
+                'id': doc.id,
+                'type': 'work_context',
+                'source': 'Firebase',
+                'created_at': ctx_data.get('created_at', firestore.SERVER_TIMESTAMP)
+            }
+            embed_context_in_rag(text, metadata)
+        
+        # Process work recommendations
+        work_recs = db.collection('work_ai_recommendation').order_by('created_at', direction=firestore.Query.DESCENDING).limit(5).get()
+        for doc in work_recs:
+            rec_data = doc.to_dict()
+            text = f"Work Recommendation: {', '.join(rec_data.get('recommendations', []))}"
+            metadata = {
+                'id': doc.id,
+                'type': 'work_recommendation',
+                'source': 'AI Recommendation',
+                'created_at': rec_data.get('created_at', firestore.SERVER_TIMESTAMP)
+            }
+            embed_context_in_rag(text, metadata)
+        
+        # Process commute contexts
+        commute_contexts = db.collection('commute_context').order_by('created_at', direction=firestore.Query.DESCENDING).limit(5).get()
+        for doc in commute_contexts:
+            ctx_data = doc.to_dict()
+            text = f"Commute Context: From {ctx_data.get('startLocation')} to {ctx_data.get('endLocation')} via {ctx_data.get('transportMode')}"
+            metadata = {
+                'id': doc.id,
+                'type': 'commute_context',
+                'source': 'Firebase',
+                'created_at': ctx_data.get('created_at', firestore.SERVER_TIMESTAMP)
+            }
+            embed_context_in_rag(text, metadata)
+        
+        # Process commute recommendations
+        commute_recs = db.collection('commute_ai_recommendation').order_by('created_at', direction=firestore.Query.DESCENDING).limit(5).get()
+        for doc in commute_recs:
+            rec_data = doc.to_dict()
+            text = f"Commute Recommendation: {', '.join(rec_data.get('recommendations', []))}"
+            metadata = {
+                'id': doc.id,
+                'type': 'commute_recommendation',
+                'source': 'AI Recommendation',
+                'created_at': rec_data.get('created_at', firestore.SERVER_TIMESTAMP)
+            }
+            embed_context_in_rag(text, metadata)
+            
+    except Exception as e:
+        print(f"Error processing and embedding Firebase contexts: {str(e)}")
+
+@app.route('/contexts')
+def contexts():
+    return render_template('contexts.html')
+
+@app.route('/api/contexts', methods=['GET'])
+def get_contexts():
+    try:
+        print("Starting to fetch contexts...")
+        contexts = []
+        if db is not None:
+            print("Firebase DB is initialized, fetching contexts...")
+            
+            # Get health contexts
+            print("Fetching health contexts...")
+            health_docs = db.collection('health_contexts').order_by('timestamp', direction=firestore.Query.DESCENDING).limit(100).stream()
+            for doc in health_docs:
+                data = doc.to_dict()
+                contexts.append({
+                    'id': doc.id,
+                    'type': 'health',
+                    'text': data.get('text', ''),
+                    'metadata': data.get('metadata', {}),
+                    'timestamp': data.get('timestamp', '')
+                })
+            print(f"Found {len([c for c in contexts if c['type'] == 'health'])} health contexts")
+            
+            # Get work contexts
+            print("Fetching work contexts...")
+            work_docs = db.collection('work_contexts').order_by('timestamp', direction=firestore.Query.DESCENDING).limit(100).stream()
+            for doc in work_docs:
+                data = doc.to_dict()
+                contexts.append({
+                    'id': doc.id,
+                    'type': 'work',
+                    'text': data.get('text', ''),
+                    'metadata': data.get('metadata', {}),
+                    'timestamp': data.get('timestamp', '')
+                })
+            print(f"Found {len([c for c in contexts if c['type'] == 'work'])} work contexts")
+            
+            # Get commute contexts
+            print("Fetching commute contexts...")
+            commute_docs = db.collection('commute_contexts').order_by('timestamp', direction=firestore.Query.DESCENDING).limit(100).stream()
+            for doc in commute_docs:
+                data = doc.to_dict()
+                contexts.append({
+                    'id': doc.id,
+                    'type': 'commute',
+                    'text': data.get('text', ''),
+                    'metadata': data.get('metadata', {}),
+                    'timestamp': data.get('timestamp', '')
+                })
+            print(f"Found {len([c for c in contexts if c['type'] == 'commute'])} commute contexts")
+            
+            # Sort all contexts by timestamp
+            contexts.sort(key=lambda x: x['timestamp'], reverse=True)
+            print(f"Total contexts found: {len(contexts)}")
+            
+            return jsonify({'contexts': contexts})
+        else:
+            print("Firebase DB is not initialized")
+            raise Exception("Firebase database not initialized")
+    except Exception as e:
+        print(f"Error loading contexts: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/contexts', methods=['POST'])
+def create_context_api():
+    try:
+        data = request.json
+        if not data or 'type' not in data or 'text' not in data:
+            return jsonify({'error': 'Missing required fields'}), 400
+        
+        if data['type'] not in ['health', 'work', 'commute']:
+            return jsonify({'error': 'Invalid context type'}), 400
+        
+        if db is not None:
+            collection_name = f"{data['type']}_contexts"
+            
+            # Add timestamp and process the context
+            context_data = {
+                'text': data['text'],
+                'metadata': data.get('metadata', {}),
+                'timestamp': datetime.now().isoformat(),
+                'processed': False
+            }
+            
+            # Add to Firebase
+            doc_ref = db.collection(collection_name).document()
+            doc_ref.set(context_data)
+            
+            # Return the created context
+            return jsonify({
+                'id': doc_ref.id,
+                'type': data['type'],
+                'text': data['text'],
+                'metadata': data.get('metadata', {}),
+                'timestamp': context_data['timestamp']
+            })
+        else:
+            return jsonify({'error': 'Firebase database not initialized'}), 500
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/contexts/<context_id>', methods=['PUT'])
+def update_context(context_id):
+    try:
+        data = request.json
+        if not data or 'type' not in data or 'text' not in data:
+            return jsonify({'error': 'Missing required fields'}), 400
+        
+        if data['type'] not in ['health', 'work', 'commute']:
+            return jsonify({'error': 'Invalid context type'}), 400
+        
+        if db is not None:
+            collection_name = f"{data['type']}_contexts"
+            
+            # Update the context
+            context_data = {
+                'text': data['text'],
+                'metadata': data.get('metadata', {}),
+                'timestamp': datetime.now().isoformat(),
+                'processed': False
+            }
+            
+            # Update in Firebase
+            doc_ref = db.collection(collection_name).document(context_id)
+            doc_ref.update(context_data)
+            
+            return jsonify({
+                'id': context_id,
+                'type': data['type'],
+                'text': data['text'],
+                'metadata': data.get('metadata', {}),
+                'timestamp': context_data['timestamp']
+            })
+        else:
+            return jsonify({'error': 'Firebase database not initialized'}), 500
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/contexts/<context_id>', methods=['DELETE'])
+def delete_context(context_id):
+    try:
+        if db is not None:
+            collections = ['health_contexts', 'work_contexts', 'commute_contexts']
+            
+            for collection_name in collections:
+                doc_ref = db.collection(collection_name).document(context_id)
+                doc = doc_ref.get()
+                if doc.exists:
+                    doc_ref.delete()
+                    return jsonify({'success': True})
+            
+            return jsonify({'error': 'Context not found'}), 404
+        else:
+            return jsonify({'error': 'Firebase database not initialized'}), 500
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/document/<doc_id>', methods=['GET'])
+def get_document(doc_id):
+    try:
+        # Get document from ChromaDB
+        result = collection.get(
+            ids=[doc_id],
+            include=['documents', 'metadatas']
+        )
+        
+        if not result or not result['ids']:
+            return jsonify({"error": "Document not found"}), 404
+            
+        return jsonify({
+            "id": doc_id,
+            "document": result['documents'][0],
+            "metadata": result['metadatas'][0]
+        })
+        
+    except Exception as e:
+        print(f"Error getting document: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/document/<doc_id>', methods=['DELETE'])
+def delete_document(doc_id):
+    try:
+        # Check if document exists
+        result = collection.get(
+            ids=[doc_id],
+            include=['metadatas']
+        )
+        
+        if not result or not result['ids']:
+            return jsonify({"error": "Document not found"}), 404
+        
+        # Delete from ChromaDB
+        collection.delete(ids=[doc_id])
+        
+        return jsonify({"success": True})
+        
+    except Exception as e:
+        print(f"Error deleting document: {str(e)}")
+        return jsonify({"error": str(e)}), 500
 
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=5000) 

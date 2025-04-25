@@ -1,168 +1,117 @@
-# Document Embedding and Search System
+# UbumuntuBrain
 
-A RAG (Retrieval-Augmented Generation) system that allows you to upload documents, generate embeddings, and perform semantic search with Gemini AI responses.
+A Flask application that provides AI-powered recommendations and search using vector embeddings.
 
-## Features
+## Project Structure
 
-- Document upload (PDF, TXT)
-- Semantic search using embeddings
-- RAG with Google's Gemini AI
-- 3D visualization of document embeddings
-- External API access
+This project follows the SOLID principles for better maintainability and separation of concerns:
 
-## Setup
+- **Single Responsibility**: Each class has one responsibility and one reason to change
+- **Open/Closed**: Classes are open for extension but closed for modification
+- **Liskov Substitution**: Services use interface patterns for substitution
+- **Interface Segregation**: Services depend on specific interfaces rather than large ones
+- **Dependency Inversion**: High-level modules depend on abstractions, not concrete implementations
+
+### Directory Structure
+
+```
+├── app.py                    # Main Flask application entry point
+├── initialize_services.py    # Service initialization manager
+├── services/                 # Service implementations
+│   ├── __init__.py
+│   ├── chromadb_service.py   # ChromaDB database service
+│   ├── embedding_service.py  # Embedding generation service
+│   └── recommendation_service.py  # Recommendation management
+├── models/                   # Data models
+│   ├── __init__.py
+│   └── recommendation.py     # Recommendation data models
+├── utils/                    # Utility functions
+│   ├── __init__.py
+│   └── recommendation_utils.py  # Helper functions
+└── static/                   # Static assets for web interface
+```
+
+## Getting Started
+
+### Prerequisites
+
+- Python 3.8+
+- ChromaDB
+- Sentence Transformers
+- Google Gemini API
+- Firebase (optional)
+
+### Installation
 
 1. Clone the repository
-2. Create a virtual environment:
+2. Install dependencies:
 
-   ```bash
-   python -m venv venv
-   source venv/bin/activate  # On Windows: venv\Scripts\activate
    ```
-
-3. Install dependencies:
-
-   ```bash
    pip install -r requirements.txt
    ```
 
-4. Create a `.env` file with your API keys:
+3. Create a `.env` file with your API keys:
 
    ```
-   GOOGLE_API_KEY=your_gemini_api_key_here
-   EXTERNAL_API_KEY=your_chosen_api_key_here
+   GOOGLE_API_KEY=your_google_api_key
+   EXTERNAL_API_KEY=your_api_key
    ```
 
-5. Run the application:
+### Running the Application
 
-   ```bash
-   python app.py
-   ```
-
-## External API Documentation
-
-### Endpoint Details
-
-- **URL**: `http://localhost:5000/api/external/query`
-- **Method**: POST
-- **Authentication**: API Key (via X-API-Key header)
-
-### Request Format
-
-#### Headers
+Start the application:
 
 ```
-Content-Type: application/json
-X-API-Key: your_external_api_key_here
+python app.py
 ```
 
-#### Body
+The application will be available at <http://localhost:5000>
 
-```json
-{
-    "query": "your search query here"
-}
-```
+## Services
 
-### Response Format
+### EmbeddingService
 
-```json
-{
-    "answer": "Generated answer from Gemini AI",
-    "query_embedding_visualization": {
-        "x": 0.123,
-        "y": 0.456,
-        "z": 0.789
-    }
-}
-```
-
-### Example Calls
-
-#### cURL
-
-```bash
-curl -X POST http://localhost:5000/api/external/query \
-  -H "Content-Type: application/json" \
-  -H "X-API-Key: your_external_api_key_here" \
-  -d '{"query": "your search query here"}'
-```
-
-#### Python
+Handles the generation and management of vector embeddings using Sentence Transformers.
 
 ```python
-import requests
-import json
+# Example usage
+from services.embedding_service import EmbeddingService
 
-url = "http://localhost:5000/api/external/query"
-headers = {
-    "Content-Type": "application/json",
-    "X-API-Key": "your_external_api_key_here"
-}
-data = {
-    "query": "your search query here"
-}
-
-response = requests.post(url, headers=headers, json=data)
-result = response.json()
-print(result)
+embedding_service = EmbeddingService()
+embedding = embedding_service.encode("Your text here")
 ```
 
-#### JavaScript
+### ChromaDBService
 
-```javascript
-const response = await fetch('http://localhost:5000/api/external/query', {
-    method: 'POST',
-    headers: {
-        'Content-Type': 'application/json',
-        'X-API-Key': 'your_external_api_key_here'
-    },
-    body: JSON.stringify({
-        query: 'your search query here'
-    })
-});
-const result = await response.json();
-console.log(result);
+Manages the vector database operations.
+
+```python
+# Example usage
+from services.chromadb_service import ChromaDBService
+
+db_service = ChromaDBService()
+db_service.initialize()
 ```
 
-### Error Responses
+### RecommendationService
 
-#### Invalid API Key (401)
+Combines embedding and database services to provide recommendations.
 
-```json
-{
-    "error": "Invalid API key"
-}
+```python
+# Example usage
+from services.recommendation_service import RecommendationService
+
+recommendation_service = RecommendationService(embedding_service, db_service)
+results = recommendation_service.get_recommendations("Your query")
 ```
 
-#### Missing Query (400)
+## API Endpoints
 
-```json
-{
-    "error": "Query is required"
-}
-```
+- `POST /api/search`: Search for recommendations
+- `POST /api/create`: Add a new embedding
+- `POST /api/upload`: Upload and process a file
+- `GET /api/data`: Get all stored data
 
-#### Server Error (500)
+## License
 
-```json
-{
-    "error": "Error message details"
-}
-```
-
-### Notes
-
-- The API key must match the one set in your `.env` file
-- The query should be a text string
-- The response includes both the AI-generated answer and 3D coordinates for visualization
-- The web interface will show a notification when the API is called
-- All API calls are logged in the web interface with the option to re-run queries
-
-## UI Features
-
-- Real-time API call notifications
-- Visual indicator for API status
-- Query history display
-- 3D embedding visualization
-- Document management interface
+MIT

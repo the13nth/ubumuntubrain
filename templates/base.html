@@ -1,0 +1,333 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>UbumuntuBrain AI Assistant</title>
+    
+    <!-- Bootstrap CSS -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <!-- Font Awesome -->
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css" rel="stylesheet">
+    
+    <style>
+        :root {
+            --primary-color: #4285f4;
+            --secondary-color: #34a853;
+            --danger-color: #ea4335;
+            --warning-color: #fbbc05;
+            --text-color: #202124;
+            --bg-color: #f8f9fa;
+            --card-bg: #ffffff;
+            --shadow-color: rgba(0, 0, 0, 0.1);
+            --border-radius: 8px;
+            --transition: all 0.3s ease;
+        }
+
+        body {
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            min-height: 100vh;
+            padding-top: 4rem;
+            padding-bottom: 2rem;
+        }
+
+        /* Navbar Styles */
+        .navbar {
+            background: var(--card-bg);
+            box-shadow: 0 2px 8px var(--shadow-color);
+            padding: 0.75rem 0;
+        }
+
+        .navbar-brand {
+            color: var(--primary-color) !important;
+            font-weight: 600;
+            font-size: 1.4rem;
+        }
+
+        .nav-link {
+            color: var(--text-color) !important;
+            font-weight: 500;
+            padding: 0.5rem 1rem;
+            border-radius: var(--border-radius);
+            transition: var(--transition);
+        }
+
+        .nav-link:hover,
+        .nav-link.active {
+            color: var(--primary-color) !important;
+            background-color: rgba(66, 133, 244, 0.1);
+        }
+
+        /* Card Styles */
+        .card {
+            background: var(--card-bg);
+            border: none;
+            border-radius: var(--border-radius);
+            box-shadow: 0 2px 8px var(--shadow-color);
+            transition: var(--transition);
+            margin-bottom: 1.5rem;
+        }
+
+        .card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px var(--shadow-color);
+        }
+
+        .card-header {
+            background: var(--card-bg);
+            border-bottom: 2px solid var(--primary-color);
+            border-radius: var(--border-radius) var(--border-radius) 0 0 !important;
+            padding: 1rem 1.25rem;
+        }
+
+        .card-title {
+            color: var(--text-color);
+            font-weight: 600;
+            margin: 0;
+        }
+
+        .card-body {
+            padding: 1.25rem;
+        }
+
+        /* Button Styles */
+        .btn {
+            border-radius: var(--border-radius);
+            padding: 0.5rem 1rem;
+            font-weight: 500;
+            transition: var(--transition);
+        }
+
+        .btn-primary {
+            background: var(--primary-color);
+            border-color: var(--primary-color);
+        }
+
+        .btn-primary:hover {
+            background: #3367d6;
+            border-color: #3367d6;
+            transform: translateY(-1px);
+        }
+
+        /* Form Controls */
+        .form-control {
+            border-radius: var(--border-radius);
+            border: 1px solid #dee2e6;
+            padding: 0.5rem 1rem;
+            transition: var(--transition);
+        }
+
+        .form-control:focus {
+            border-color: var(--primary-color);
+            box-shadow: 0 0 0 0.2rem rgba(66, 133, 244, 0.25);
+        }
+
+        /* Table Styles */
+        .table {
+            margin-bottom: 0;
+        }
+
+        .table th {
+            border-top: none;
+            font-weight: 600;
+            color: var(--text-color);
+        }
+
+        .table td {
+            vertical-align: middle;
+        }
+
+        /* Badge Styles */
+        .badge {
+            padding: 0.5rem 0.75rem;
+            font-weight: 500;
+            border-radius: 20px;
+        }
+
+        /* Upload Zone */
+        .upload-zone {
+            border: 2px dashed #dee2e6;
+            border-radius: var(--border-radius);
+            padding: 2rem;
+            text-align: center;
+            cursor: pointer;
+            transition: var(--transition);
+            background: var(--card-bg);
+        }
+
+        .upload-zone:hover,
+        .upload-zone.highlight {
+            border-color: var(--primary-color);
+            background-color: rgba(66, 133, 244, 0.05);
+        }
+
+        .upload-icon {
+            font-size: 3rem;
+            color: var(--primary-color);
+            margin-bottom: 1rem;
+        }
+
+        /* Loading and Error States */
+        #loading-indicator {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(255, 255, 255, 0.9);
+            display: none;
+            justify-content: center;
+            align-items: center;
+            z-index: 9999;
+        }
+
+        .loader {
+            width: 48px;
+            height: 48px;
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid var(--primary-color);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        #error-container {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            z-index: 9999;
+            max-width: 400px;
+        }
+
+        .error-message {
+            background: var(--danger-color);
+            color: white;
+            padding: 1rem;
+            margin-bottom: 0.5rem;
+            border-radius: var(--border-radius);
+            box-shadow: 0 2px 8px var(--shadow-color);
+            animation: slideIn 0.3s ease;
+        }
+
+        @keyframes slideIn {
+            from {
+                transform: translateX(100%);
+                opacity: 0;
+            }
+            to {
+                transform: translateX(0);
+                opacity: 1;
+            }
+        }
+
+        /* Visualization Container */
+        .visualization-container {
+            min-height: 400px;
+            background: var(--card-bg);
+            border-radius: var(--border-radius);
+            padding: 1.25rem;
+        }
+
+        /* Stats and Analysis */
+        .stat-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 0.75rem 1rem;
+            background: rgba(66, 133, 244, 0.05);
+            border-radius: var(--border-radius);
+            margin-bottom: 0.5rem;
+        }
+
+        .stat-value {
+            font-weight: 600;
+            color: var(--primary-color);
+        }
+    </style>
+</head>
+<body>
+    <!-- Navigation -->
+    <nav class="navbar navbar-expand-lg navbar-light fixed-top">
+        <div class="container">
+            <a class="navbar-brand" href="{{ url_for('home') }}">UbumuntuBrain</a>
+            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+                <span class="navbar-toggler-icon"></span>
+            </button>
+            <div class="collapse navbar-collapse" id="navbarNav">
+                <ul class="navbar-nav ms-auto">
+                    <li class="nav-item">
+                        <a class="nav-link {% if request.endpoint == 'home' or request.endpoint == 'query_page' %}active{% endif %}" href="{{ url_for('home') }}">
+                            <i class="fas fa-home me-1"></i> Home
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link {% if request.endpoint == 'create_page' %}active{% endif %}" href="{{ url_for('create_page') }}">
+                            <i class="fas fa-chart-network me-1"></i> Visualization
+                        </a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link {% if request.endpoint == 'contexts' %}active{% endif %}" href="{{ url_for('contexts') }}">
+                            <i class="fas fa-layer-group me-1"></i> Contexts
+                        </a>
+                    </li>
+                </ul>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Main Content -->
+    <main class="container mt-4">
+        {% block content %}{% endblock %}
+    </main>
+
+    <!-- Bootstrap Bundle with Popper -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+    
+    <!-- Utility Functions -->
+    <script>
+        function showLoading(show = true) {
+            const loader = document.getElementById('loading-indicator');
+            if (loader) {
+                loader.style.display = show ? 'flex' : 'none';
+            }
+        }
+
+        function showError(message, duration = 5000) {
+            const container = document.getElementById('error-container') || createErrorContainer();
+            const errorDiv = document.createElement('div');
+            errorDiv.className = 'error-message';
+            errorDiv.innerHTML = `
+                ${message}
+                <button type="button" class="btn-close btn-close-white" onclick="this.parentElement.remove()"></button>
+            `;
+            container.appendChild(errorDiv);
+
+            if (duration > 0) {
+                setTimeout(() => {
+                    if (errorDiv.parentElement) {
+                        errorDiv.remove();
+                    }
+                }, duration);
+            }
+        }
+
+        function createErrorContainer() {
+            const container = document.createElement('div');
+            container.id = 'error-container';
+            document.body.appendChild(container);
+            return container;
+        }
+
+        // Handle server errors
+        window.addEventListener('unhandledrejection', function(event) {
+            showError('An error occurred: ' + event.reason);
+        });
+    </script>
+</body>
+</html> 

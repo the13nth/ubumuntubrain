@@ -1,0 +1,265 @@
+{% macro visualization() %}
+<div class="visualization-container">
+    <div class="viz-controls">
+        <div class="viz-buttons">
+            <button class="viz-btn active" data-view="3d">3D View</button>
+            <button class="viz-btn" data-view="2d">2D View</button>
+        </div>
+        <div class="viz-filters">
+            <select id="vizTypeFilter" class="viz-filter">
+                <option value="all">All Types</option>
+                <option value="health">Health</option>
+                <option value="work">Work</option>
+                <option value="commute">Commute</option>
+            </select>
+            <select id="vizSourceFilter" class="viz-filter">
+                <option value="all">All Sources</option>
+                <option value="upload">Uploads</option>
+                <option value="firebase">Firebase</option>
+                <option value="recommendation">Recommendations</option>
+            </select>
+        </div>
+    </div>
+
+    <div class="viz-wrapper">
+        <div id="vizPlot" class="viz-plot"></div>
+        <div id="vizLegend" class="viz-legend"></div>
+        <div id="vizLoading" class="viz-loading">
+            <div class="spinner"></div>
+            <p>Loading visualization...</p>
+        </div>
+        <div id="vizError" class="viz-error" style="display: none;"></div>
+    </div>
+</div>
+
+<style>
+.visualization-container {
+    padding: 0;
+    margin: 0;
+}
+
+.viz-controls {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 15px;
+}
+
+.viz-buttons {
+    display: flex;
+    gap: 10px;
+}
+
+.viz-btn {
+    padding: 8px 16px;
+    border: 1px solid #4285f4;
+    background: white;
+    color: #4285f4;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: all 0.3s ease;
+}
+
+.viz-btn.active {
+    background: #4285f4;
+    color: white;
+}
+
+.viz-filters {
+    display: flex;
+    gap: 10px;
+}
+
+.viz-filter {
+    padding: 8px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    background: white;
+}
+
+.viz-wrapper {
+    position: relative;
+    height: 500px;
+    border: none;
+    border-radius: 0;
+    overflow: hidden;
+}
+
+.viz-plot {
+    width: 100%;
+    height: 100%;
+}
+
+.viz-legend {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    background: rgba(255, 255, 255, 0.9);
+    padding: 10px;
+    border-radius: 4px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+.viz-loading {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    text-align: center;
+    display: none;
+}
+
+.viz-error {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    text-align: center;
+    color: #e74c3c;
+    background: rgba(255, 255, 255, 0.9);
+    padding: 15px;
+    border-radius: 4px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+.spinner {
+    border: 3px solid #f3f3f3;
+    border-top: 3px solid #4285f4;
+    border-radius: 50%;
+    width: 24px;
+    height: 24px;
+    animation: spin 1s linear infinite;
+    margin: 0 auto 10px;
+}
+
+@keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+</style>
+
+<script>
+let currentView = '3d';
+let plotData = null;
+
+async function loadVisualizationData() {
+    const loadingIndicator = document.getElementById('vizLoading');
+    const errorDiv = document.getElementById('vizError');
+    loadingIndicator.style.display = 'block';
+    errorDiv.style.display = 'none';
+
+    try {
+        const response = await fetch('/api/embeddings-visualization');
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
+        const data = await response.json();
+        if (data.error) {
+            throw new Error(data.error);
+        }
+        plotData = data;
+        updateVisualization();
+    } catch (error) {
+        console.error('Error loading visualization data:', error);
+        errorDiv.textContent = `Error loading visualization: ${error.message}`;
+        errorDiv.style.display = 'block';
+    } finally {
+        loadingIndicator.style.display = 'none';
+    }
+}
+
+function updateVisualization() {
+    if (!plotData) return;
+
+    const typeFilter = document.getElementById('vizTypeFilter').value;
+    const sourceFilter = document.getElementById('vizSourceFilter').value;
+
+    // Filter data
+    let filteredPoints = plotData.points;
+    if (typeFilter !== 'all') {
+        filteredPoints = filteredPoints.filter(p => p.type === typeFilter);
+    }
+    if (sourceFilter !== 'all') {
+        filteredPoints = filteredPoints.filter(p => p.source === sourceFilter);
+    }
+
+    // Create plot data
+    const plotlyData = [];
+    const uniqueTypes = [...new Set(filteredPoints.map(p => p.type))];
+
+    uniqueTypes.forEach(type => {
+        const points = filteredPoints.filter(p => p.type === type);
+        const trace = {
+            name: type,
+            mode: 'markers',
+            marker: {
+                size: points.map(p => p.size),
+                color: points[0].color,
+            },
+            hovertemplate: 
+                '<b>%{text}</b><br>' +
+                'Type: ' + type + '<br>' +
+                'Source: %{customdata}<br>' +
+                '<extra></extra>'
+        };
+
+        if (currentView === '3d') {
+            trace.type = 'scatter3d';
+            trace.x = points.map(p => p.x);
+            trace.y = points.map(p => p.y);
+            trace.z = points.map(p => p.z);
+        } else {
+            trace.type = 'scatter';
+            trace.x = points.map(p => p.x);
+            trace.y = points.map(p => p.y);
+        }
+
+        trace.text = points.map(p => p.text);
+        trace.customdata = points.map(p => p.source);
+        plotlyData.push(trace);
+    });
+
+    // Create layout
+    const layout = {
+        margin: { l: 0, r: 0, b: 0, t: 0 },
+        showlegend: true,
+        legend: {
+            x: 1,
+            xanchor: 'right',
+            y: 1
+        },
+        hovermode: 'closest'
+    };
+
+    if (currentView === '3d') {
+        layout.scene = {
+            xaxis: { title: 'X' },
+            yaxis: { title: 'Y' },
+            zaxis: { title: 'Z' }
+        };
+    } else {
+        layout.xaxis = { title: 'X' };
+        layout.yaxis = { title: 'Y' };
+    }
+
+    // Plot
+    Plotly.newPlot('vizPlot', plotlyData, layout);
+}
+
+// Event listeners
+document.querySelectorAll('.viz-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+        document.querySelectorAll('.viz-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        currentView = btn.dataset.view;
+        updateVisualization();
+    });
+});
+
+document.getElementById('vizTypeFilter').addEventListener('change', updateVisualization);
+document.getElementById('vizSourceFilter').addEventListener('change', updateVisualization);
+
+// Initial load
+document.addEventListener('DOMContentLoaded', loadVisualizationData);
+</script>
+{% endmacro %} 

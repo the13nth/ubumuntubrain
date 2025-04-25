@@ -129,104 +129,171 @@ function handleWebSocketMessage(data) {
     }
 }
 
-function loadAllContextData() {
-    // Load latest query
-    fetch('/api/latest-firebase-query')
-        .then(response => response.json())
-        .then(data => updateLatestQuery(data))
-        .catch(error => console.error('Error loading latest query:', error));
-    
-    // Load health context
-    fetch('/api/latest-health-context')
-        .then(response => response.json())
-        .then(data => updateHealthContext(data))
-        .catch(error => console.error('Error loading health context:', error));
-    
-    // Load work context
-    fetch('/api/latest-work-context')
-        .then(response => response.json())
-        .then(data => updateWorkContext(data))
-        .catch(error => console.error('Error loading work context:', error));
-    
-    // Load commute context
-    fetch('/api/latest-commute-context')
-        .then(response => response.json())
-        .then(data => updateCommuteContext(data))
-        .catch(error => console.error('Error loading commute context:', error));
+// Utility Functions
+function escapeHtml(unsafe) {
+    return unsafe
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
 }
 
-function updateLatestQuery(data) {
-    const section = document.getElementById('latestQuerySection');
-    if (section) {
-        if (data.success && data.data) {
-            const query = data.data;
-            section.innerHTML = `
-                <div class="context-item">
-                    <p><strong>Query:</strong> ${query.query}</p>
-                    <p><small>Time: ${formatTimestamp(query.timestamp)}</small></p>
-                </div>
-            `;
-        } else {
-            section.innerHTML = '<p>No queries available</p>';
+function formatTimestamp(timestamp) {
+    if (!timestamp) return 'N/A';
+    const date = new Date(timestamp);
+    return date.toLocaleString();
+}
+
+function showError(message) {
+    const errorContainer = document.getElementById('error-container') || createErrorContainer();
+    const errorDiv = document.createElement('div');
+    errorDiv.className = 'error-message';
+    errorDiv.innerHTML = `
+        ${escapeHtml(message)}
+        <button onclick="this.parentElement.remove()">×</button>
+    `;
+    errorContainer.appendChild(errorDiv);
+    
+    // Auto-remove after 5 seconds
+    setTimeout(() => {
+        if (errorDiv.parentElement) {
+            errorDiv.remove();
         }
+    }, 5000);
+}
+
+function createErrorContainer() {
+    const container = document.createElement('div');
+    container.id = 'error-container';
+    document.body.appendChild(container);
+    return container;
+}
+
+function showLoading(show = true) {
+    const loader = document.getElementById('loading-indicator');
+    if (loader) {
+        loader.style.display = show ? 'block' : 'none';
     }
+}
+
+// Data Loading Functions
+async function loadAllContextData() {
+    showLoading(true);
+    try {
+        const [queryResponse, healthResponse, workResponse, commuteResponse] = await Promise.all([
+            fetch('/api/latest-firebase-query'),
+            fetch('/api/latest-health-context'),
+            fetch('/api/latest-work-context'),
+            fetch('/api/latest-commute-context')
+        ]);
+
+        const responses = {
+            query: await queryResponse.json(),
+            health: await healthResponse.json(),
+            work: await workResponse.json(),
+            commute: await commuteResponse.json()
+        };
+
+        Object.entries(responses).forEach(([type, data]) => {
+            if (!data.success) {
+                throw new Error(`Failed to load ${type} data: ${data.error || 'Unknown error'}`);
+            }
+        });
+
+        updateLatestQuery(responses.query.data);
+        updateHealthContext(responses.health.data);
+        updateWorkContext(responses.work.data);
+        updateCommuteContext(responses.commute.data);
+
+    } catch (error) {
+        console.error('Error loading context data:', error);
+        showError(error.message || 'Failed to load context data');
+    } finally {
+        showLoading(false);
+    }
+}
+
+// UI Update Functions
+function updateLatestQuery(data) {
+    const container = document.getElementById('latest-query');
+    if (!container) return;
+
+    const query = data?.query || 'No query available';
+    const timestamp = data?.timestamp;
+    const status = data?.processed ? 'Processed' : 'Pending';
+    const statusClass = data?.processed ? 'success' : 'pending';
+
+    container.innerHTML = `
+        <div class="query-card">
+            <h3>Latest Query</h3>
+            <div class="query-text">${escapeHtml(query)}</div>
+            <div class="query-timestamp">Timestamp: ${formatTimestamp(timestamp)}</div>
+            <div class="query-status ${statusClass}">${status}</div>
+            ${!data?.processed ? '<button onclick="processQuery()">Process Query</button>' : ''}
+        </div>
+    `;
 }
 
 function updateHealthContext(data) {
-    const section = document.getElementById('healthContextSection');
-    if (section) {
-        if (data.success && data.data) {
-            const health = data.data;
-            section.innerHTML = `
-                <div class="context-item">
-                    <p><strong>Exercise:</strong> ${health.exerciseMinutes} minutes</p>
-                    <p><strong>Blood Sugar:</strong> ${health.bloodSugar}</p>
-                    <p><strong>Meal Type:</strong> ${health.mealType}</p>
-                    <p><small>Updated: ${formatTimestamp(health.timestamp)}</small></p>
-                </div>
-            `;
-        } else {
-            section.innerHTML = '<p>No health context available</p>';
-        }
-    }
+    const container = document.getElementById('health-context');
+    if (!container) return;
+
+    container.innerHTML = `
+        <div class="context-card health">
+            <h3>Health Context</h3>
+            <p>${escapeHtml(data?.context || 'No health context available')}</p>
+            <div class="timestamp">Last updated: ${formatTimestamp(data?.timestamp)}</div>
+        </div>
+    `;
 }
 
 function updateWorkContext(data) {
-    const section = document.getElementById('workContextSection');
-    if (section) {
-        if (data.success && data.data) {
-            const work = data.data;
-            section.innerHTML = `
-                <div class="context-item">
-                    <p><strong>Task:</strong> ${work.taskName}</p>
-                    <p><strong>Status:</strong> ${work.status}</p>
-                    <p><strong>Priority:</strong> ${work.priority}</p>
-                    <p><small>Deadline: ${formatTimestamp(work.deadline)}</small></p>
-                </div>
-            `;
-        } else {
-            section.innerHTML = '<p>No work context available</p>';
-        }
-    }
+    const container = document.getElementById('work-context');
+    if (!container) return;
+
+    container.innerHTML = `
+        <div class="context-card work">
+            <h3>Work Context</h3>
+            <p>${escapeHtml(data?.context || 'No work context available')}</p>
+            <div class="timestamp">Last updated: ${formatTimestamp(data?.timestamp)}</div>
+        </div>
+    `;
 }
 
 function updateCommuteContext(data) {
-    const section = document.getElementById('commuteContextSection');
-    if (section) {
-        if (data.success && data.data) {
-            const commute = data.data;
-            section.innerHTML = `
-                <div class="context-item">
-                    <p><strong>From:</strong> ${commute.startLocation}</p>
-                    <p><strong>To:</strong> ${commute.endLocation}</p>
-                    <p><strong>Mode:</strong> ${commute.transportMode}</p>
-                    <p><strong>Traffic:</strong> ${commute.trafficCondition}</p>
-                    <p><small>Updated: ${formatTimestamp(commute.timestamp)}</small></p>
-                </div>
-            `;
-        } else {
-            section.innerHTML = '<p>No commute context available</p>';
+    const container = document.getElementById('commute-context');
+    if (!container) return;
+
+    container.innerHTML = `
+        <div class="context-card commute">
+            <h3>Commute Context</h3>
+            <p>${escapeHtml(data?.context || 'No commute context available')}</p>
+            <div class="timestamp">Last updated: ${formatTimestamp(data?.timestamp)}</div>
+        </div>
+    `;
+}
+
+async function processQuery() {
+    showLoading(true);
+    try {
+        const response = await fetch('/api/process-query', {
+            method: 'POST'
+        });
+        const data = await response.json();
+        
+        if (!data.success) {
+            throw new Error(data.error || 'Failed to process query');
         }
+        
+        // Reload data after processing
+        await loadAllContextData();
+        
+    } catch (error) {
+        console.error('Error processing query:', error);
+        showError(error.message || 'Failed to process query');
+    } finally {
+        showLoading(false);
     }
 }
 

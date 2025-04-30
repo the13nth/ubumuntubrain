@@ -1,3 +1,7 @@
+import warnings
+# Filter out the specific FutureWarning from transformers
+warnings.filterwarnings('ignore', category=FutureWarning, module='transformers.utils.generic')
+
 from flask import Flask, render_template, request, jsonify
 import os
 from werkzeug.utils import secure_filename
@@ -65,33 +69,13 @@ try:
     ))
     print("ChromaDB client created successfully")
 
-    # Create or get the collection with logging
+    # Create or get the collection
     collection = client.get_or_create_collection(
         name="text_embeddings",
         metadata={"hnsw:space": "cosine"}
     )
     print(f"Collection initialized. Current count: {len(collection.get()['ids'])}")
 
-    # Add test data if collection is empty
-    if len(collection.get()['ids']) == 0:
-        print("Adding test data to empty collection...")
-        test_data = [
-            "This is a test document about health context.",
-            "This is a test document about work context.",
-            "This is a test document about commute context."
-        ]
-        embeddings = [model.encode(text).tolist() for text in test_data]
-        collection.add(
-            embeddings=embeddings,
-            documents=test_data,
-            ids=[f"test_{i+1}" for i in range(len(test_data))],
-            metadatas=[
-                {"source": "Test", "type": "health"},
-                {"source": "Test", "type": "work"},
-                {"source": "Test", "type": "commute"}
-            ]
-        )
-        print(f"Added {len(test_data)} test documents")
 except Exception as e:
     print(f"Error initializing ChromaDB: {str(e)}")
     raise e
@@ -268,105 +252,100 @@ def process_search_query(query, context_type=None):
 
 def generate_context_recommendations(query, context_texts, context_type):
     """Generate context-specific recommendations using Gemini."""
-    if not context_texts:
-        return "No relevant information found.", []
     
-    context_prompts = {
-        "health": """You are a health advisor AI. Based on the following health contexts and query, provide:
-1. A brief analysis of the current health situation
-2. 3-5 specific health recommendations
-3. Any potential health concerns to watch for
+    # Get previous recommendations from Firebase
+    previous_recommendations = []
+    if db is not None:
+        try:
+            if context_type == 'health':
+                prev_recs = db.collection('health_ai_recommendation').order_by('created_at', direction=firestore.Query.DESCENDING).limit(1).get()
+            elif context_type == 'work':
+                prev_recs = db.collection('work_ai_recommendation').order_by('created_at', direction=firestore.Query.DESCENDING).limit(1).get()
+            elif context_type == 'commute':
+                prev_recs = db.collection('commute_ai_recommendation').order_by('created_at', direction=firestore.Query.DESCENDING).limit(1).get()
+            
+            for doc in prev_recs:
+                rec_data = doc.to_dict()
+                if 'recommendations' in rec_data:
+                    previous_recommendations = rec_data['recommendations']
+                break
+        except Exception as e:
+            print(f"Error fetching previous recommendations: {str(e)}")
 
-Health Contexts:
-{contexts}
-
-Query: {query}
-
-Format your response as:
-ANALYSIS: (brief situation analysis)
-RECOMMENDATIONS:
-- (recommendation 1)
-- (recommendation 2)
-- (recommendation 3)
-WATCH FOR:
-- (concern 1)
-- (concern 2)""",
-
-        "work": """You are a productivity advisor AI. Based on the following work contexts and query, provide:
-1. A brief analysis of the work situation
-2. 3-5 specific productivity recommendations
-3. Priority action items
-
-Work Contexts:
-{contexts}
+    # Analyze query and context
+    analysis_prompt = f"""You are UbumuntuBrain, an intelligent AI assistant. Analyze this query and context:
 
 Query: {query}
 
-Format your response as:
-ANALYSIS: (brief situation analysis)
-RECOMMENDATIONS:
-- (recommendation 1)
-- (recommendation 2)
-- (recommendation 3)
-PRIORITIES:
-- (priority 1)
-- (priority 2)""",
-
-        "commute": """You are a commute optimization AI. Based on the following commute contexts and query, provide:
-1. A brief analysis of the commute situation
-2. 3-5 specific commute recommendations
-3. Alternative routes or modes to consider
-
-Commute Contexts:
-{contexts}
-
-Query: {query}
-
-Format your response as:
-ANALYSIS: (brief situation analysis)
-RECOMMENDATIONS:
-- (recommendation 1)
-- (recommendation 2)
-- (recommendation 3)
-ALTERNATIVES:
-- (alternative 1)
-- (alternative 2)"""
-    }
-
-    # Use default prompt if context_type not specified
-    if not context_type or context_type not in context_prompts:
-        prompt = f"""Based on the following contexts and query, provide:
-1. A brief analysis
-2. 3-5 specific recommendations
-
-Contexts:
+Available Contexts:
 {chr(10).join([f"Context {i+1}:{chr(10)}{text}" for i, text in enumerate(context_texts)])}
 
-Query: {query}"""
-    else:
-        prompt = context_prompts[context_type].format(
-            contexts=chr(10).join([f"Context {i+1}:{chr(10)}{text}" for i, text in enumerate(context_texts)]),
-            query=query
-        )
+Previous Recommendations:
+{chr(10).join([f"- {rec}" for rec in previous_recommendations]) if previous_recommendations else "No previous recommendations available."}
+
+Analyze the following:
+1. What is the user trying to achieve with this query?
+2. Which contexts are most relevant to this query?
+3. What key information from the contexts helps answer this query?
+4. What specific actions or information should be provided?
+
+Provide your analysis in a clear, structured way that will help generate a response."""
 
     try:
-        response = model_gemini.generate_content(prompt)
-        if not response.text:
-            return "Could not generate recommendations.", []
+        # Get query analysis
+        analysis = model_gemini.generate_content(analysis_prompt)
+        if not analysis.text:
+            return "I apologize, but I couldn't analyze your query. Would you like to try rephrasing it?", []
 
-        # Parse recommendations from the response
+        # Build response prompt using the analysis
+        response_prompt = f"""You are UbumuntuBrain, a helpful AI assistant. Generate a response based on this context:
+
+Query: {query}
+
+Analysis of the query and context:
+{analysis.text}
+
+Previous Recommendations:
+{chr(10).join([f"- {rec}" for rec in previous_recommendations]) if previous_recommendations else "No previous recommendations available."}
+
+Current Contexts:
+{chr(10).join([f"Context {i+1}:{chr(10)}{text}" for i, text in enumerate(context_texts)])}
+
+Provide a friendly, helpful response that:
+1. Acknowledges the user's query
+2. References relevant information from the contexts
+3. Incorporates previous recommendations if relevant
+4. Provides clear, actionable recommendations or next steps
+5. Maintains a conversational, supportive tone
+
+Your response should be practical and directly address the user's needs."""
+
+        # Generate the final response
+        response = model_gemini.generate_content(response_prompt)
+        if not response.text:
+            return "I apologize, but I couldn't generate a response. Would you like to try asking in a different way?", []
+
+        # Extract recommendations from the response
         text = response.text
         recommendations = []
         
-        # Extract recommendations section
-        if "RECOMMENDATIONS:" in text:
-            rec_section = text.split("RECOMMENDATIONS:")[1].split("\n")
+        # Look for recommendations in the response
+        if "recommendations:" in text.lower():
+            rec_section = text.split("recommendations:", 1)[1].split("\n")
             recommendations = [r.strip("- ").strip() for r in rec_section if r.strip().startswith("-")]
-        
+        elif "next steps:" in text.lower():
+            rec_section = text.split("next steps:", 1)[1].split("\n")
+            recommendations = [r.strip("- ").strip() for r in rec_section if r.strip().startswith("-")]
+        elif "suggested actions:" in text.lower():
+            rec_section = text.split("suggested actions:", 1)[1].split("\n")
+            recommendations = [r.strip("- ").strip() for r in rec_section if r.strip().startswith("-")]
+
         return text, recommendations
+
     except Exception as e:
-        print(f"Error generating recommendations: {str(e)}")
-        return f"Error generating recommendations: {str(e)}", []
+        print(f"Error in generate_context_recommendations: {str(e)}")
+        print(f"Full traceback: {traceback.format_exc()}")
+        return f"I apologize, but I encountered an error while processing your query. Would you like to try asking in a different way?", []
 
 @app.route('/api/process-contexts', methods=['POST'])
 def process_contexts():
@@ -726,174 +705,34 @@ def get_point_size(doc_type):
     return size_map.get(doc_type, size_map['unknown'])
 
 def create_rag_prompt(query, relevant_docs):
-    # Check if this is a dashboard layout optimization request
-    if "optimize" in query.lower() and ("display" in query.lower() or "layout" in query.lower() or "dashboard" in query.lower()):
-        # For dashboard layout optimization requests
-        dashboard_config = None
-        
-        # Try to extract dashboard configuration from relevant documents
-        for doc in relevant_docs:
-            if "cols" in doc and "rows" in doc and "rowHeight" in doc:
-                try:
-                    import json
-                    import re
-                    
-                    # Extract JSON-like configuration using regex
-                    config_match = re.search(r'({[^}]*"cols"[^}]*"rows"[^}]*})', doc)
-                    if config_match:
-                        config_text = config_match.group(1)
-                        # Clean up potential issues with the extracted JSON
-                        config_text = re.sub(r',\s*}', '}', config_text)
-                        dashboard_config = json.loads(config_text)
-                        break
-                except Exception as e:
-                    print(f"Error parsing dashboard config: {str(e)}")
-        
-        # If no configuration found, use defaults
-        if not dashboard_config:
-            dashboard_config = {
-                "cols": 2,
-                "rows": 2,
-                "rowHeight": 200,
-                "margin": [10, 10],
-            }
-        
-        # Create specialized prompt for layout optimization
-        prompt = f"""You are a UI layout assistant. Given this dashboard configuration:
-      - Current columns: {dashboard_config.get('cols', 2)}
-      - Current rows: {dashboard_config.get('rows', 2)}
-      - Current row height: {dashboard_config.get('rowHeight', 200)}px
-      - Current margin: {dashboard_config.get('margin', [10, 10])}
-
-      User request: "{query}"
-
-      Based on the user's request, return a response that includes:
-      1. A layout configuration JSON object
-      2. Health information for the user's diabetes monitoring
-
-      The layout configuration must be a valid JSON object with these properties:
-      {{
-        "cols": (number between 1-12),
-        "rows": (number between 1-20),
-        "rowHeight": (number between 40-200),
-        "margin": [number, number]
-      }}
-
-      The health information should be included in a "healthContext" object with this structure:
-      {{
-        "healthContext": {{
-          "diabetesInfo": {{
-            "lastReading": {{
-              "glucoseLevel": (number),
-              "timestamp": (ISO date string),
-              "status": (one of: "Normal", "Slightly Elevated", "Elevated", "Low")
-            }},
-            "dailyStats": {{
-              "averageGlucose": (number),
-              "readings": (number),
-              "inRange": (number),
-              "high": (number),
-              "low": (number)
-            }},
-            "medications": [
-              {{
-                "name": (string),
-                "dosage": (string),
-                "frequency": (string),
-                "lastTaken": (ISO date string)
-              }}
-            ],
-            "recommendations": [
-              (string array of 2-3 recommendations)
-            ]
-          }}
-        }}
-      }}
-
-      Format your answer as a code block with both the layout configuration and health context:
-      ```json
-      {{
-        "response": {{
-          "timestamp": "2024-03-20T14:30:00Z",
-          "raw": "```json\\n{{\\n  \\"cols\\": 4,\\n  \\"rows\\": 3,\\n  \\"rowHeight\\": 120,\\n  \\"margin\\": [15, 15]\\n}}\\n```\\n",
-          "parsed": {{
-            "cols": 4,
-            "rows": 3,
-            "rowHeight": 120,
-            "margin": [15, 15]
-          }},
-          "validated": {{
-            "cols": 4,
-            "rows": 3,
-            "rowHeight": 120,
-            "margin": [15, 15]
-          }}
-        }},
-        "result": {{
-          "finalConfig": {{
-            "cols": 4,
-            "rows": 3,
-            "rowHeight": 120,
-            "margin": [15, 15]
-          }},
-          "changes": {{
-            "colsChanged": true,
-            "rowsChanged": true,
-            "rowHeightChanged": true,
-            "marginChanged": true
-          }}
-        }},
-        "healthContext": {{
-          "diabetesInfo": {{
-            "lastReading": {{
-              "glucoseLevel": 110,
-              "timestamp": "2024-03-20T14:30:00Z",
-              "status": "Normal"
-            }},
-            "dailyStats": {{
-              "averageGlucose": 112,
-              "readings": 8,
-              "inRange": 8,
-              "high": 0,
-              "low": 0
-            }},
-            "medications": [
-              {{
-                "name": "Metformin",
-                "dosage": "500mg",
-                "frequency": "Twice daily",
-                "lastTaken": "2024-03-20T08:00:00Z"
-              }}
-            ],
-            "recommendations": [
-              "Schedule is on track",
-              "Consider a short walk after next meal",
-              "Next reading due before dinner"
-            ]
-          }}
-        }}
-      }}
-      ```
-      """
-        
-        return prompt
-    
     # For standard RAG queries
     context = "\n\n".join([f"Document {i+1}:\n{doc}" for i, doc in enumerate(relevant_docs)])
     
     # Create the prompt
-    prompt = f"""You are a helpful AI assistant that answers questions based on the provided context. 
-Your answers should be:
-1. Accurate and based only on the provided context
+    prompt = f"""You are a friendly and helpful AI personal assistant named UbumuntuBrain. Your responses should be:
+1. Conversational and empathetic
 2. Clear and well-structured
-3. Include relevant quotes or references from the source documents when appropriate
+3. Based on the provided context and previous recommendations
+4. Include specific, actionable suggestions
+
+When analyzing the context, consider:
+- Current situation and user needs
+- Previous recommendations and their status
+- Related health, work, or commute contexts
+- Potential connections between different contexts
+
+Structure your response as follows:
+1. A brief, friendly acknowledgment of the query
+2. Analysis of the current situation
+3. Specific recommendations or suggestions
+4. Follow-up considerations or next steps
 
 Context:
 {context}
 
 Question: {query}
 
-Please provide a comprehensive answer based on the above context. If the context doesn't contain enough information to answer the question fully, please state that explicitly."""
+Please provide a helpful, conversational response that makes the user feel understood and supported. If the context doesn't contain enough information, acknowledge that while still being helpful."""
 
     return prompt
 
@@ -1316,9 +1155,9 @@ def save_work_recommendations():
             'taskName': data.get('taskName'),
             'status': data.get('status'),
             'priority': data.get('priority'),
-            'collaborators': data.get('collaborators'),
-            'deadline': data.get('deadline'),
-            'notes': data.get('notes'),
+            'collaborators': data.get('collaborators', ''),
+            'deadline': data.get('deadline', ''),
+            'notes': data.get('notes', ''),
             'query_id': data.get('query_id'),
             'work_context_id': data.get('work_context_id'),
             'timestamp': firestore.SERVER_TIMESTAMP,
@@ -2101,102 +1940,195 @@ def contexts():
 @app.route('/api/contexts', methods=['GET'])
 def get_contexts():
     try:
-        print("Starting to fetch contexts...")
-        contexts = []
-        if db is not None:
-            print("Firebase DB is initialized, fetching contexts...")
-            
-            # Get health contexts
-            print("Fetching health contexts...")
-            health_docs = db.collection('health_contexts').order_by('timestamp', direction=firestore.Query.DESCENDING).limit(100).stream()
-            for doc in health_docs:
-                data = doc.to_dict()
-                contexts.append({
-                    'id': doc.id,
-                    'type': 'health',
-                    'text': data.get('text', ''),
-                    'metadata': data.get('metadata', {}),
-                    'timestamp': data.get('timestamp', '')
-                })
-            print(f"Found {len([c for c in contexts if c['type'] == 'health'])} health contexts")
-            
-            # Get work contexts
-            print("Fetching work contexts...")
-            work_docs = db.collection('work_contexts').order_by('timestamp', direction=firestore.Query.DESCENDING).limit(100).stream()
-            for doc in work_docs:
-                data = doc.to_dict()
-                contexts.append({
-                    'id': doc.id,
-                    'type': 'work',
-                    'text': data.get('text', ''),
-                    'metadata': data.get('metadata', {}),
-                    'timestamp': data.get('timestamp', '')
-                })
-            print(f"Found {len([c for c in contexts if c['type'] == 'work'])} work contexts")
-            
-            # Get commute contexts
-            print("Fetching commute contexts...")
-            commute_docs = db.collection('commute_contexts').order_by('timestamp', direction=firestore.Query.DESCENDING).limit(100).stream()
-            for doc in commute_docs:
-                data = doc.to_dict()
-                contexts.append({
-                    'id': doc.id,
-                    'type': 'commute',
-                    'text': data.get('text', ''),
-                    'metadata': data.get('metadata', {}),
-                    'timestamp': data.get('timestamp', '')
-                })
-            print(f"Found {len([c for c in contexts if c['type'] == 'commute'])} commute contexts")
-            
-            # Sort all contexts by timestamp
-            contexts.sort(key=lambda x: x['timestamp'], reverse=True)
-            print(f"Total contexts found: {len(contexts)}")
-            
-            return jsonify({'contexts': contexts})
-        else:
-            print("Firebase DB is not initialized")
-            raise Exception("Firebase database not initialized")
+        all_contexts = []
+        
+        # Fetch from work_context collection
+        work_docs = db.collection('work_context').get()
+        for doc in work_docs:
+            data = doc.to_dict()
+            all_contexts.append({
+                'id': doc.id,
+                'document': f"Work Context: Task {data.get('taskName')}, Priority {data.get('priority')}, Status {data.get('status')}",
+                'type': 'work_context',
+                'source': 'Firebase',
+                'created_at': data.get('created_at'),
+                'metadata': {
+                    'color': get_point_color('work_context'),
+                    'size': get_point_size('work_context')
+                },
+                # Preserve original fields
+                'taskName': data.get('taskName'),
+                'status': data.get('status'),
+                'priority': data.get('priority'),
+                'collaborators': data.get('collaborators'),
+                'deadline': data.get('deadline'),
+                'notes': data.get('notes'),
+                'timestamp': data.get('timestamp')
+            })
+
+        # Fetch from commute_context collection
+        commute_docs = db.collection('commute_context').get()
+        for doc in commute_docs:
+            data = doc.to_dict()
+            all_contexts.append({
+                'id': doc.id,
+                'document': f"Commute Context: From {data.get('startLocation')} to {data.get('endLocation')} via {data.get('transportMode')}",
+                'type': 'commute_context',
+                'source': 'Firebase',
+                'created_at': data.get('created_at'),
+                'metadata': {
+                    'color': get_point_color('commute_context'),
+                    'size': get_point_size('commute_context')
+                },
+                # Preserve original fields
+                'startLocation': data.get('startLocation'),
+                'endLocation': data.get('endLocation'),
+                'duration': data.get('duration'),
+                'transportMode': data.get('transportMode'),
+                'trafficCondition': data.get('trafficCondition'),
+                'notes': data.get('notes'),
+                'timestamp': data.get('timestamp')
+            })
+
+        # Fetch from health_context collection
+        health_docs = db.collection('health_context').get()
+        for doc in health_docs:
+            data = doc.to_dict()
+            all_contexts.append({
+                'id': doc.id,
+                'document': f"Health Context: Blood Sugar {data.get('bloodSugar')}, Exercise {data.get('exerciseMinutes')}",
+                'type': 'health_context',
+                'source': 'Firebase',
+                'created_at': data.get('created_at'),
+                'metadata': {
+                    'color': get_point_color('health_context'),
+                    'size': get_point_size('health_context')
+                },
+                # Preserve original fields
+                'bloodSugar': data.get('bloodSugar'),
+                'exerciseMinutes': data.get('exerciseMinutes'),
+                'mealType': data.get('mealType'),
+                'medication': data.get('medication'),
+                'notes': data.get('notes'),
+                'timestamp': data.get('timestamp')
+            })
+
+        return jsonify({'contexts': all_contexts})
     except Exception as e:
-        print(f"Error loading contexts: {str(e)}")
+        print(f"Error fetching contexts: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/contexts', methods=['POST'])
 def create_context_api():
     try:
-        data = request.json
-        if not data or 'type' not in data or 'text' not in data:
-            return jsonify({'error': 'Missing required fields'}), 400
-        
-        if data['type'] not in ['health', 'work', 'commute']:
-            return jsonify({'error': 'Invalid context type'}), 400
-        
-        if db is not None:
-            collection_name = f"{data['type']}_contexts"
+        data = request.get_json()
+        if not data:
+            return jsonify({'error': 'No data provided'}), 400
+
+        context_type = data.get('type')
+        if not context_type:
+            return jsonify({'error': 'Missing context type'}), 400
+
+        # Log received data for debugging
+        print(f"Received context data: {data}")
+
+        # Handle work tracking context
+        if context_type == 'work_tracking':
+            required_fields = ['taskName', 'status', 'priority']
+            missing_fields = [field for field in required_fields if not data.get(field)]
             
-            # Add timestamp and process the context
+            if missing_fields:
+                return jsonify({'error': f'Missing required fields: {", ".join(missing_fields)}'}), 400
+            
+            # Prepare context data
             context_data = {
-                'text': data['text'],
-                'metadata': data.get('metadata', {}),
-                'timestamp': datetime.now().isoformat(),
-                'processed': False
+                'type': context_type,
+                'taskName': data.get('taskName'),
+                'status': data.get('status'),
+                'priority': data.get('priority'),
+                'collaborators': data.get('collaborators', ''),
+                'deadline': data.get('deadline', ''),
+                'notes': data.get('notes', ''),
+                'created_at': firestore.SERVER_TIMESTAMP,
+                'timestamp': firestore.SERVER_TIMESTAMP
             }
-            
-            # Add to Firebase
-            doc_ref = db.collection(collection_name).document()
+
+            # Save to Firebase
+            doc_ref = db.collection('work_context').document()
             doc_ref.set(context_data)
             
-            # Return the created context
+            # Get the actual document to return the server timestamp
+            created_doc = doc_ref.get().to_dict()
+            
+            print(f"Successfully created work context with ID: {doc_ref.id}")
             return jsonify({
+                'message': 'Context created successfully',
                 'id': doc_ref.id,
-                'type': data['type'],
-                'text': data['text'],
-                'metadata': data.get('metadata', {}),
-                'timestamp': context_data['timestamp']
-            })
+                'data': created_doc
+            }), 201
+
+        # Handle commute tracking context
+        elif context_type == 'commute_tracking':
+            required_fields = ['startLocation', 'endLocation', 'duration']
+            missing_fields = [field for field in required_fields if not data.get(field)]
+            
+            if missing_fields:
+                return jsonify({'error': f'Missing required fields: {", ".join(missing_fields)}'}), 400
+            
+            context_data = {
+                'type': context_type,
+                'startLocation': data.get('startLocation'),
+                'endLocation': data.get('endLocation'),
+                'duration': data.get('duration'),
+                'transportMode': data.get('transportMode', ''),
+                'trafficCondition': data.get('trafficCondition', ''),
+                'notes': data.get('notes', ''),
+                'created_at': datetime.datetime.utcnow().isoformat() + 'Z',
+                'timestamp': datetime.datetime.utcnow().strftime("%B %d, %Y at %I:%M:%S %p UTC%z")
+            }
+            
+            doc_ref = db.collection('commute_context').document()
+            doc_ref.set(context_data)
+            return jsonify({
+                'message': 'Context created successfully',
+                'id': doc_ref.id,
+                'data': context_data
+            }), 201
+
+        # Handle diabetes tracking context
+        elif context_type == 'diabetes_tracking':
+            required_fields = ['bloodSugar', 'exerciseMinutes', 'mealType']
+            missing_fields = [field for field in required_fields if not data.get(field)]
+            
+            if missing_fields:
+                return jsonify({'error': f'Missing required fields: {", ".join(missing_fields)}'}), 400
+            
+            context_data = {
+                'type': context_type,
+                'bloodSugar': data.get('bloodSugar'),
+                'exerciseMinutes': data.get('exerciseMinutes'),
+                'mealType': data.get('mealType'),
+                'medication': data.get('medication', ''),
+                'notes': data.get('notes', ''),
+                'created_at': datetime.datetime.utcnow().isoformat() + 'Z',
+                'timestamp': datetime.datetime.utcnow().strftime("%B %d, %Y at %I:%M:%S %p UTC%z")
+            }
+            
+            doc_ref = db.collection('health_context').document()
+            doc_ref.set(context_data)
+            return jsonify({
+                'message': 'Context created successfully',
+                'id': doc_ref.id,
+                'data': context_data
+            }), 201
+
         else:
-            return jsonify({'error': 'Firebase database not initialized'}), 500
+            return jsonify({'error': f'Invalid context type: {context_type}'}), 400
+
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        print(f"Error creating context: {str(e)}")
+        traceback.print_exc()  # Print full stack trace
+        return jsonify({'error': f'Failed to create context: {str(e)}'}), 500
 
 @app.route('/api/contexts/<context_id>', methods=['PUT'])
 def update_context(context_id):
@@ -2239,7 +2171,7 @@ def update_context(context_id):
 def delete_context(context_id):
     try:
         if db is not None:
-            collections = ['health_contexts', 'work_contexts', 'commute_contexts']
+            collections = ['health_context', 'work_context', 'commute_context']  # Changed from plural to singular
             
             for collection_name in collections:
                 doc_ref = db.collection(collection_name).document(context_id)

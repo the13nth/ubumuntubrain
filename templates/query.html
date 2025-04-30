@@ -2,6 +2,34 @@
 
 {% block content %}
 <style>
+    /* Override navbar styles for dark theme */
+    .navbar {
+        background-color: var(--chat-background) !important;
+        border-bottom: 1px solid var(--border-color);
+    }
+
+    .navbar-brand {
+        color: var(--text-color) !important;
+    }
+
+    .nav-link {
+        color: rgba(255, 255, 255, 0.8) !important;
+    }
+
+    .nav-link:hover,
+    .nav-link.active {
+        color: var(--text-color) !important;
+        background-color: rgba(255, 255, 255, 0.1);
+    }
+
+    .navbar-toggler {
+        border-color: var(--border-color);
+    }
+
+    .navbar-toggler-icon {
+        background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 30 30'%3e%3cpath stroke='rgba(255, 255, 255, 0.8)' stroke-linecap='round' stroke-miterlimit='10' stroke-width='2' d='M4 7h22M4 15h22M4 23h22'/%3e%3c/svg%3e");
+    }
+
     :root {
         --chat-background: #343541;
         --message-background: #444654;
@@ -266,10 +294,7 @@
                 <i class="fas fa-paper-plane"></i>
                 Send
             </button>
-            <a href="/create" class="create-link">
-                <i class="fas fa-chart-network"></i>
-                Visualize
-            </a>
+            
         </div>
     </div>
 </div>

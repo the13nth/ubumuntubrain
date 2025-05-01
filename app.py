@@ -419,28 +419,45 @@ def search():
         print(f"Error in search: {str(e)}")
         return jsonify({"error": str(e)}), 500
 
-def allowed_file(filename):
-    return '.' in filename and \
-           filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
-
-def extract_text_from_pdf(pdf_file):
-    pdf_reader = PyPDF2.PdfReader(pdf_file)
-    text = ""
-    for page in pdf_reader.pages:
-        text += page.extract_text() + "\n"
-    return text
-
-def extract_text_from_json(json_file):
-    """Extract text content from JSON file."""
+def extract_text_from_pdf(file):
+    """Extract text from a PDF file."""
     try:
-        import json
-        data = json.load(json_file)
-        # Convert the JSON to a formatted string representation
-        text = json.dumps(data, indent=2)
-        return text
+        # Create a PDF reader object
+        reader = PyPDF2.PdfReader(file)
+        
+        # Extract text from all pages
+        text = ""
+        for page in reader.pages:
+            text += page.extract_text() + "\n"
+        
+        return text.strip()
     except Exception as e:
-        print(f"Error extracting text from JSON: {str(e)}")
-        return f"Error parsing JSON: {str(e)}"
+        raise Exception(f"Error extracting text from PDF: {str(e)}")
+
+def extract_text_from_json(file):
+    """Extract text from a JSON file."""
+    try:
+        # Load and parse JSON
+        data = json.loads(file.read().decode('utf-8'))
+        
+        # Convert JSON to string, handling nested structures
+        if isinstance(data, dict):
+            # If it's a dictionary, extract all values
+            text = "\n".join(str(v) for v in data.values() if v is not None)
+        elif isinstance(data, list):
+            # If it's a list, extract all items
+            text = "\n".join(str(item) for item in data if item is not None)
+        else:
+            # If it's a simple value, convert to string
+            text = str(data)
+        
+        return text.strip()
+    except Exception as e:
+        raise Exception(f"Error extracting text from JSON: {str(e)}")
+
+def allowed_file(filename):
+    """Check if an uploaded file is allowed."""
+    return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
 @app.route('/')
 def home():
@@ -502,17 +519,44 @@ def upload_file():
             # Generate embedding
             embedding = model.encode(text).tolist()
             
+            # Create metadata with timestamp
+            metadata = {
+                "source": f"File: {file.filename}",
+                "type": "document",
+                "created_at": datetime.datetime.utcnow().isoformat(),
+                "file_type": file.filename.split('.')[-1],
+                "size": len(text),
+                "color": "#ea4335",  # Red for documents
+                "size_visual": 10
+            }
+            
             # Add to ChromaDB
+            doc_id = f"doc_{datetime.datetime.utcnow().strftime('%Y%m%d%H%M%S')}"
             collection.add(
                 embeddings=[embedding],
                 documents=[text],
-                ids=[f"doc_{len(collection.get()['ids'])}"],
-                metadatas=[{"source": f"File: {file.filename}"}]
+                ids=[doc_id],
+                metadatas=[metadata]
             )
             
-            return jsonify({"success": True})
+            # Also save to Firebase for backup
+            if db:
+                db.collection('uploaded_documents').document(doc_id).set({
+                    'filename': file.filename,
+                    'text': text[:1000] + '...' if len(text) > 1000 else text,  # Store truncated text
+                    'metadata': metadata,
+                    'created_at': firestore.SERVER_TIMESTAMP
+                })
+            
+            return jsonify({
+                "success": True,
+                "doc_id": doc_id,
+                "message": "File uploaded and processed successfully",
+                "metadata": metadata
+            })
             
         except Exception as e:
+            print(f"Error processing file: {str(e)}")
             return jsonify({"success": False, "error": str(e)}), 500
     
     return jsonify({"success": False, "error": "Invalid file type"}), 400
@@ -1941,10 +1985,49 @@ def contexts():
 def get_contexts():
     try:
         all_contexts = []
+        seen_ids = set()  # Track seen document IDs to prevent duplicates
+        
+        # Fetch uploaded documents from ChromaDB first
+        if collection:
+            chroma_docs = collection.get()
+            for i, doc in enumerate(chroma_docs['documents']):
+                doc_id = chroma_docs['ids'][i]
+                metadata = chroma_docs['metadatas'][i]
+                
+                # Skip if we've seen this ID before
+                if doc_id in seen_ids:
+                    continue
+                seen_ids.add(doc_id)
+                
+                # Format the document display text based on source
+                source = metadata.get('source', '')
+                if source.startswith('File:'):
+                    display_text = f"Document: {source[6:]} - {doc[:100]}..."  # Show filename and preview
+                else:
+                    display_text = doc[:200] + '...' if len(doc) > 200 else doc
+                
+                all_contexts.append({
+                    'id': doc_id,
+                    'document': display_text,
+                    'type': metadata.get('type', 'document'),
+                    'source': source,
+                    'created_at': metadata.get('created_at'),
+                    'metadata': {
+                        'color': '#ea4335',  # Red for documents
+                        'size': 10,
+                        'file_type': metadata.get('file_type', ''),
+                        'size_bytes': metadata.get('size', 0)
+                    }
+                })
         
         # Fetch from work_context collection
         work_docs = db.collection('work_context').get()
         for doc in work_docs:
+            # Skip if we've seen this ID before
+            if doc.id in seen_ids:
+                continue
+            seen_ids.add(doc.id)
+            
             data = doc.to_dict()
             all_contexts.append({
                 'id': doc.id,
@@ -1953,22 +2036,19 @@ def get_contexts():
                 'source': 'Firebase',
                 'created_at': data.get('created_at'),
                 'metadata': {
-                    'color': get_point_color('work_context'),
-                    'size': get_point_size('work_context')
-                },
-                # Preserve original fields
-                'taskName': data.get('taskName'),
-                'status': data.get('status'),
-                'priority': data.get('priority'),
-                'collaborators': data.get('collaborators'),
-                'deadline': data.get('deadline'),
-                'notes': data.get('notes'),
-                'timestamp': data.get('timestamp')
+                    'color': '#4285f4',  # Blue for work
+                    'size': 10
+                }
             })
 
         # Fetch from commute_context collection
         commute_docs = db.collection('commute_context').get()
         for doc in commute_docs:
+            # Skip if we've seen this ID before
+            if doc.id in seen_ids:
+                continue
+            seen_ids.add(doc.id)
+            
             data = doc.to_dict()
             all_contexts.append({
                 'id': doc.id,
@@ -1977,22 +2057,19 @@ def get_contexts():
                 'source': 'Firebase',
                 'created_at': data.get('created_at'),
                 'metadata': {
-                    'color': get_point_color('commute_context'),
-                    'size': get_point_size('commute_context')
-                },
-                # Preserve original fields
-                'startLocation': data.get('startLocation'),
-                'endLocation': data.get('endLocation'),
-                'duration': data.get('duration'),
-                'transportMode': data.get('transportMode'),
-                'trafficCondition': data.get('trafficCondition'),
-                'notes': data.get('notes'),
-                'timestamp': data.get('timestamp')
+                    'color': '#fbbc05',  # Yellow for commute
+                    'size': 10
+                }
             })
 
         # Fetch from health_context collection
         health_docs = db.collection('health_context').get()
         for doc in health_docs:
+            # Skip if we've seen this ID before
+            if doc.id in seen_ids:
+                continue
+            seen_ids.add(doc.id)
+            
             data = doc.to_dict()
             all_contexts.append({
                 'id': doc.id,
@@ -2001,16 +2078,9 @@ def get_contexts():
                 'source': 'Firebase',
                 'created_at': data.get('created_at'),
                 'metadata': {
-                    'color': get_point_color('health_context'),
-                    'size': get_point_size('health_context')
-                },
-                # Preserve original fields
-                'bloodSugar': data.get('bloodSugar'),
-                'exerciseMinutes': data.get('exerciseMinutes'),
-                'mealType': data.get('mealType'),
-                'medication': data.get('medication'),
-                'notes': data.get('notes'),
-                'timestamp': data.get('timestamp')
+                    'color': '#34a853',  # Green for health
+                    'size': 10
+                }
             })
 
         return jsonify({'contexts': all_contexts})

@@ -231,11 +231,50 @@
 </div>
 
 <script>
-// Initialize global variables
+// Global variables and functions
 let allDocuments = [];
 let currentPage = 1;
 const itemsPerPage = 50;
 
+async function loadDocuments() {
+    showLoading(true);
+    try {
+        const response = await fetch('/api/contexts');
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
+        const result = await response.json();
+        
+        // Use the contexts directly since they're already formatted correctly
+        allDocuments = result.contexts || [];
+        
+        // Sort documents by creation date in descending order
+        allDocuments.sort((a, b) => {
+            const getTime = (doc) => {
+                if (!doc.created_at) return 0;
+                return new Date(doc.created_at).getTime();
+            };
+            return getTime(b) - getTime(a);
+        });
+        
+        // Get pagination elements
+        const prevPageBtn = document.getElementById('prevPage');
+        const nextPageBtn = document.getElementById('nextPage');
+        const pageInfo = document.getElementById('pageInfo');
+        
+        // Update table with pagination
+        updateTable(prevPageBtn, nextPageBtn, pageInfo);
+        
+    } catch (error) {
+        showError('Error loading documents: ' + error.message);
+        console.error('Error:', error);
+        allDocuments = [];
+    } finally {
+        showLoading(false);
+    }
+}
+
+// Event Listeners
 document.addEventListener('DOMContentLoaded', function() {
     // Get DOM elements
     const dropZone = document.getElementById('dropZone');
@@ -265,193 +304,24 @@ document.addEventListener('DOMContentLoaded', function() {
     });
 
     ['dragleave', 'drop'].forEach(eventName => {
-        dropZone.addEventListener('drop', handleDrop);
-        dropZone.addEventListener('click', () => fileInput.click());
-        fileInput.addEventListener('change', handleFileSelect);
-    });
-    
-    function handleDrop(e) {
-        const dt = e.dataTransfer;
-        const files = dt.files;
-        handleFiles(files);
-    }
-    
-    function handleFileSelect(e) {
-        const files = e.target.files;
-        handleFiles(files);
-    }
-    
-    function handleFiles(files) {
-        [...files].forEach(uploadFile);
-    }
-    
-    async function uploadFile(file) {
-        // Create form data
-        const formData = new FormData();
-        formData.append('file', file);
-        
-        // Add file to list with loading state
-        const li = document.createElement('li');
-        li.className = 'list-group-item';
-        li.innerHTML = `
-            <div class="d-flex justify-content-between align-items-center">
-                <span>${file.name}</span>
-                <div class="spinner-border spinner-border-sm" role="status">
-                    <span class="visually-hidden">Loading...</span>
-                </div>
-            </div>
-        `;
-        fileList.appendChild(li);
-        
-        try {
-            const response = await fetch('/api/upload', {
-                method: 'POST',
-                body: formData
-            });
-
-            const result = await response.json();
-            
-            if (result.success) {
-                li.innerHTML = `
-                    <div class="d-flex justify-content-between align-items-center">
-                        <span>${file.name}</span>
-                        <i class="fas fa-check text-success"></i>
-                    </div>
-                `;
-                loadDocuments();
-            } else {
-                throw new Error(result.error || 'Upload failed');
-            }
-        } catch (error) {
-            li.innerHTML = `
-                <div class="d-flex justify-content-between align-items-center">
-                    <span>${file.name}</span>
-                    <div class="text-danger">
-                        <i class="fas fa-exclamation-circle"></i>
-                        ${error.message}
-                    </div>
-                </div>
-            `;
-        }
-    }
-    
-    // Load and display documents
-    async function loadDocuments() {
-        showLoading(true);
-        try {
-            const response = await fetch('/api/contexts');
-            if (!response.ok) {
-                throw new Error(`HTTP error! status: ${response.status}`);
-            }
-            const result = await response.json();
-            
-            // Use the contexts directly since they're already formatted correctly
-            allDocuments = result.contexts || [];
-            
-            // Sort documents by creation date in descending order
-            allDocuments.sort((a, b) => {
-                const getTime = (doc) => {
-                    if (!doc.created_at) return 0;
-                    return new Date(doc.created_at).getTime();
-                };
-                return getTime(b) - getTime(a);
-            });
-            
-            updateTable();
-            
-        } catch (error) {
-            showError('Error loading documents: ' + error.message);
-            console.error('Error:', error);
-            allDocuments = [];
-        } finally {
-            showLoading(false);
-        }
-    }
-    
-    function updateTable() {
-        const tbody = document.getElementById('documentTableBody');
-        
-        if (!Array.isArray(allDocuments) || allDocuments.length === 0) {
-            tbody.innerHTML = `
-                <tr>
-                    <td colspan="7" class="text-center py-4">
-                        <div class="text-muted">
-                            <i class="fas fa-inbox fa-2x mb-2"></i>
-                            <p class="mb-0">No documents found.</p>
-                        </div>
-                    </td>
-                </tr>
-            `;
-            return;
-        }
-
-        const searchTerm = searchInput.value.toLowerCase();
-        const selectedType = typeFilter.value;
-        
-        // Filter documents
-        let filteredDocs = allDocuments.filter(doc => {
-            const matchesSearch = doc.document.toLowerCase().includes(searchTerm);
-            const matchesType = selectedType === 'all' || doc.type === selectedType;
-            return matchesSearch && matchesType;
+        dropZone.addEventListener(eventName, () => {
+            dropZone.classList.remove('highlight');
         });
-        
-        // Update pagination
-        const totalPages = Math.ceil(filteredDocs.length / itemsPerPage);
-        currentPage = Math.min(currentPage, totalPages);
-        if (currentPage < 1) currentPage = 1;
-        
-        pageInfo.textContent = `Page ${currentPage} of ${totalPages || 1}`;
-        prevPageBtn.disabled = currentPage === 1;
-        nextPageBtn.disabled = currentPage === totalPages;
-        
-        // Get current page documents
-        const start = (currentPage - 1) * itemsPerPage;
-        const end = start + itemsPerPage;
-        const pageDocuments = filteredDocs.slice(start, end);
-        
-        // Update table with row numbers
-        tbody.innerHTML = pageDocuments.map((doc, index) => {
-            // Format the timestamp from ISO string
-            let createdAt = 'N/A';
-            if (doc.created_at) {
-                createdAt = new Date(doc.created_at).toLocaleString();
-            }
-            
-            return `
-            <tr>
-                <td>${start + index + 1}</td>
-                <td class="text-muted">${doc.id}</td>
-                <td>${doc.document}</td>
-                <td>
-                    <span class="badge" style="background-color: ${doc.metadata.color}">
-                        ${doc.type}
-                    </span>
-                </td>
-                <td>${doc.source}</td>
-                <td>${createdAt}</td>
-                <td>
-                    <div class="btn-group">
-                        <button class="btn btn-sm btn-outline-primary" onclick="viewDocument('${doc.id}')" title="View">
-                            <i class="fas fa-eye"></i>
-                        </button>
-                        <button class="btn btn-sm btn-outline-danger" onclick="deleteDocument('${doc.id}')" title="Delete">
-                            <i class="fas fa-trash"></i>
-                        </button>
-                    </div>
-                </td>
-            </tr>
-        `}).join('');
-    }
+    });
+
+    dropZone.addEventListener('drop', handleDrop);
+    dropZone.addEventListener('click', () => fileInput.click());
+    fileInput.addEventListener('change', handleFileSelect);
     
-    // Event listeners
+    // Event listeners for search and filter
     searchInput.addEventListener('input', () => {
         currentPage = 1;
-        updateTable();
+        updateTable(prevPageBtn, nextPageBtn, pageInfo);
     });
     
     typeFilter.addEventListener('change', () => {
         currentPage = 1;
-        updateTable();
+        updateTable(prevPageBtn, nextPageBtn, pageInfo);
     });
     
     refreshBtn.addEventListener('click', loadDocuments);
@@ -459,7 +329,7 @@ document.addEventListener('DOMContentLoaded', function() {
     prevPageBtn.addEventListener('click', () => {
         if (currentPage > 1) {
             currentPage--;
-            updateTable();
+            updateTable(prevPageBtn, nextPageBtn, pageInfo);
         }
     });
     
@@ -467,13 +337,90 @@ document.addEventListener('DOMContentLoaded', function() {
         const totalPages = Math.ceil(allDocuments.length / itemsPerPage);
         if (currentPage < totalPages) {
             currentPage++;
-            updateTable();
+            updateTable(prevPageBtn, nextPageBtn, pageInfo);
         }
     });
     
     // Initial load
     loadDocuments();
 });
+
+function updateTable(prevPageBtn, nextPageBtn, pageInfo) {
+    const tbody = document.getElementById('documentTableBody');
+    const searchInput = document.getElementById('searchInput');
+    const typeFilter = document.getElementById('typeFilter');
+    
+    if (!Array.isArray(allDocuments) || allDocuments.length === 0) {
+        tbody.innerHTML = `
+            <tr>
+                <td colspan="7" class="text-center py-4">
+                    <div class="text-muted">
+                        <i class="fas fa-inbox fa-2x mb-2"></i>
+                        <p class="mb-0">No documents found.</p>
+                    </div>
+                </td>
+            </tr>
+        `;
+        return;
+    }
+
+    const searchTerm = searchInput.value.toLowerCase();
+    const selectedType = typeFilter.value;
+    
+    // Filter documents
+    let filteredDocs = allDocuments.filter(doc => {
+        const matchesSearch = doc.document.toLowerCase().includes(searchTerm);
+        const matchesType = selectedType === 'all' || doc.type === selectedType;
+        return matchesSearch && matchesType;
+    });
+    
+    // Update pagination
+    const totalPages = Math.ceil(filteredDocs.length / itemsPerPage);
+    currentPage = Math.min(currentPage, totalPages);
+    if (currentPage < 1) currentPage = 1;
+    
+    if (pageInfo) pageInfo.textContent = `Page ${currentPage} of ${totalPages || 1}`;
+    if (prevPageBtn) prevPageBtn.disabled = currentPage === 1;
+    if (nextPageBtn) nextPageBtn.disabled = currentPage === totalPages;
+    
+    // Get current page documents
+    const start = (currentPage - 1) * itemsPerPage;
+    const end = start + itemsPerPage;
+    const pageDocuments = filteredDocs.slice(start, end);
+    
+    // Update table with row numbers
+    tbody.innerHTML = pageDocuments.map((doc, index) => {
+        // Format the timestamp from ISO string
+        let createdAt = 'N/A';
+        if (doc.created_at) {
+            createdAt = new Date(doc.created_at).toLocaleString();
+        }
+        
+        return `
+        <tr>
+            <td>${start + index + 1}</td>
+            <td class="text-muted">${doc.id}</td>
+            <td>${doc.document}</td>
+            <td>
+                <span class="badge" style="background-color: ${doc.metadata?.color || '#6c757d'}">
+                    ${doc.type}
+                </span>
+            </td>
+            <td>${doc.source}</td>
+            <td>${createdAt}</td>
+            <td>
+                <div class="btn-group">
+                    <button class="btn btn-sm btn-outline-primary" onclick="viewDocument('${doc.id}')" title="View">
+                        <i class="fas fa-eye"></i>
+                    </button>
+                    <button class="btn btn-sm btn-outline-danger" onclick="deleteDocument('${doc.id}')" title="Delete">
+                        <i class="fas fa-trash"></i>
+                    </button>
+                </div>
+            </td>
+        </tr>
+    `}).join('');
+}
 
 // Document actions
 async function viewDocument(id) {
@@ -870,28 +817,78 @@ async function submitContextForm() {
     }
 }
 
-// Remove the loadContexts function call from DOMContentLoaded
-document.addEventListener('DOMContentLoaded', function() {
-    // Get DOM elements
-    const dropZone = document.getElementById('dropZone');
-    const fileInput = document.getElementById('fileInput');
+// File Upload Functions
+function handleDrop(e) {
+    const dt = e.dataTransfer;
+    const files = dt.files;
+    handleFiles(files);
+}
+
+function handleFileSelect(e) {
+    const files = e.target.files;
+    handleFiles(files);
+}
+
+function handleFiles(files) {
+    [...files].forEach(uploadFile);
+}
+
+async function uploadFile(file) {
     const fileList = document.getElementById('fileList').querySelector('ul');
-    const searchInput = document.getElementById('searchInput');
-    const typeFilter = document.getElementById('typeFilter');
-    const refreshBtn = document.getElementById('refreshBtn');
-    const prevPageBtn = document.getElementById('prevPage');
-    const nextPageBtn = document.getElementById('nextPage');
-    const pageInfo = document.getElementById('pageInfo');
     
-    // ... keep existing setup code ...
+    // Create form data
+    const formData = new FormData();
+    formData.append('file', file);
     
-    // Initial load
-    loadDocuments();
-});
+    // Add file to list with loading state
+    const li = document.createElement('li');
+    li.className = 'list-group-item';
+    li.innerHTML = `
+        <div class="d-flex justify-content-between align-items-center">
+            <span>${file.name}</span>
+            <div class="spinner-border spinner-border-sm" role="status">
+                <span class="visually-hidden">Loading...</span>
+            </div>
+        </div>
+    `;
+    fileList.appendChild(li);
+    
+    try {
+        const response = await fetch('/api/upload', {
+            method: 'POST',
+            body: formData
+        });
 
-// Remove the deleteContext function since we're not using it anymore
-// Keep only the deleteDocument function for the table view
-
+        const result = await response.json();
+        
+        if (result.success) {
+            li.innerHTML = `
+                <div class="d-flex justify-content-between align-items-center">
+                    <span>${file.name}</span>
+                    <i class="fas fa-check text-success"></i>
+                </div>
+            `;
+            // Reload documents list immediately after successful upload
+            await loadDocuments();
+            // Clear the file list after 2 seconds
+            setTimeout(() => {
+                li.remove();
+            }, 2000);
+        } else {
+            throw new Error(result.error || 'Upload failed');
+        }
+    } catch (error) {
+        li.innerHTML = `
+            <div class="d-flex justify-content-between align-items-center">
+                <span>${file.name}</span>
+                <div class="text-danger">
+                    <i class="fas fa-exclamation-circle"></i>
+                    ${error.message}
+                </div>
+            </div>
+        `;
+    }
+}
 </script>
 
 <style>

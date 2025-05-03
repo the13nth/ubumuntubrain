@@ -272,7 +272,114 @@
     .message th {
         background-color: rgba(0, 0, 0, 0.2);
     }
+
+    .message h1, .message h2, .message h3, .message h4, .message h5, .message h6 {
+        color: var(--primary-color);
+        margin-top: 1.2em;
+        margin-bottom: 0.5em;
+        font-weight: 700;
+    }
+    .message ul, .message ol {
+        margin-left: 1.5em;
+        margin-bottom: 1em;
+    }
+    /* Modal styles */
+    .modal {
+        display: none;
+        position: fixed;
+        z-index: 1000;
+        left: 0;
+        top: 0;
+        width: 100vw;
+        height: 100vh;
+        overflow: auto;
+        background: rgba(0,0,0,0.5);
+        justify-content: center;
+        align-items: center;
+    }
+    .modal-content {
+        background: var(--chat-background);
+        color: var(--text-color);
+        padding: 2rem;
+        border-radius: var(--border-radius);
+        min-width: 320px;
+        max-width: 90vw;
+        box-shadow: 0 4px 24px var(--shadow-color);
+        position: relative;
+    }
+    .modal-close {
+        position: absolute;
+        top: 1rem;
+        right: 1rem;
+        background: none;
+        border: none;
+        color: var(--text-color);
+        font-size: 1.5rem;
+        cursor: pointer;
+    }
+    .modal label {
+        display: block;
+        margin: 1rem 0 0.5rem 0;
+    }
+    .modal input[type="text"] {
+        width: 100%;
+        padding: 0.5rem;
+        border-radius: var(--border-radius);
+        border: 1px solid var(--border-color);
+        background: var(--input-background);
+        color: var(--text-color);
+    }
+    .modal .context-options {
+        display: flex;
+        flex-direction: column;
+        gap: 0.5rem;
+    }
+    .modal .save-btn {
+        margin-top: 1.5rem;
+        background: var(--primary-color);
+        color: #fff;
+        border: none;
+        border-radius: var(--border-radius);
+        padding: 0.75rem 1.5rem;
+        font-weight: 500;
+        cursor: pointer;
+        transition: var(--transition);
+    }
+    .modal .save-btn:hover {
+        background: #3367d6;
+    }
+    .collapsible {
+        background: none;
+        color: var(--primary-color);
+        cursor: pointer;
+        padding: 0.5rem 0;
+        border: none;
+        text-align: left;
+        outline: none;
+        font-size: 1rem;
+        font-weight: 600;
+        margin-top: 1.5rem;
+    }
+    .collapsible:after {
+        content: '▼';
+        font-size: 0.8em;
+        margin-left: 0.5em;
+        transition: transform 0.2s;
+    }
+    .collapsible.active:after {
+        transform: rotate(-180deg);
+    }
+    .collapsible-content {
+        display: none;
+        margin-top: 0.5rem;
+    }
+    .collapsible-content.active {
+        display: block;
+    }
 </style>
+
+<!-- Add Marked.js for Markdown parsing -->
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 
 <div class="chat-container">
     <div id="chatMessages" class="chat-messages">
@@ -296,6 +403,26 @@
             </button>
             
         </div>
+    </div>
+</div>
+
+<!-- Modal for saving recommendation -->
+<div id="saveModal" class="modal">
+    <div class="modal-content">
+        <button class="modal-close" onclick="closeSaveModal()">&times;</button>
+        <h3>Save Recommendation</h3>
+        <label>Select where to save:</label>
+        <div class="context-options">
+            <label><input type="radio" name="contextType" value="work_context"> Work Context</label>
+            <label><input type="radio" name="contextType" value="health_context"> Health Context</label>
+            <label><input type="radio" name="contextType" value="commute_context"> Commute Context</label>
+            <label><input type="radio" name="contextType" value="custom"> Custom Context</label>
+        </div>
+        <div id="customContextInput" style="display:none;">
+            <label for="customContextName">Custom Context Name:</label>
+            <input type="text" id="customContextName" placeholder="Enter custom context name">
+        </div>
+        <button class="save-btn" onclick="confirmSaveRecommendation()">Save</button>
     </div>
 </div>
 
@@ -403,11 +530,54 @@
         }
     }
 
+    let lastAssistantAnswer = '';
+
     function addMessage(content, type) {
         const chatMessages = document.getElementById('chatMessages');
         const messageDiv = document.createElement('div');
         messageDiv.className = `message ${type}-message`;
-        messageDiv.innerHTML = content;
+        if (type === 'assistant') {
+            // Split content into main answer and related contexts (if present)
+            let mainAnswer = content;
+            let relatedContextsHtml = '';
+            const relatedContextsMatch = content.match(/<div class="matching-contexts">([\s\S]*)<\/div>/);
+            if (relatedContextsMatch) {
+                mainAnswer = content.replace(relatedContextsMatch[0], '');
+                relatedContextsHtml = relatedContextsMatch[0];
+            }
+            // Render main answer
+            const answerDiv = document.createElement('div');
+            answerDiv.innerHTML = marked.parse(mainAnswer);
+            messageDiv.appendChild(answerDiv);
+            // Add Save button right after the answer
+            const saveBtn = document.createElement('button');
+            saveBtn.textContent = 'Save';
+            saveBtn.className = 'send-button';
+            saveBtn.style.marginTop = '1rem';
+            saveBtn.onclick = function() {
+                openSaveModal(mainAnswer);
+            };
+            messageDiv.appendChild(saveBtn);
+            lastAssistantAnswer = mainAnswer;
+            // If related contexts exist, add collapsible section
+            if (relatedContextsHtml) {
+                const collapsibleBtn = document.createElement('button');
+                collapsibleBtn.className = 'collapsible';
+                collapsibleBtn.textContent = 'Show Related Contexts';
+                collapsibleBtn.onclick = function() {
+                    this.classList.toggle('active');
+                    collapsibleContent.classList.toggle('active');
+                    this.textContent = this.classList.contains('active') ? 'Hide Related Contexts' : 'Show Related Contexts';
+                };
+                const collapsibleContent = document.createElement('div');
+                collapsibleContent.className = 'collapsible-content';
+                collapsibleContent.innerHTML = relatedContextsHtml;
+                messageDiv.appendChild(collapsibleBtn);
+                messageDiv.appendChild(collapsibleContent);
+            }
+        } else {
+            messageDiv.textContent = content;
+        }
         chatMessages.appendChild(messageDiv);
         messageDiv.scrollIntoView({ behavior: 'smooth' });
     }
@@ -428,6 +598,69 @@
         const loadingDiv = document.getElementById(`loading-${id}`);
         if (loadingDiv) {
             loadingDiv.remove();
+        }
+    }
+
+    // Modal logic
+    function openSaveModal(answer) {
+        document.getElementById('saveModal').style.display = 'flex';
+        lastAssistantAnswer = answer;
+        // Reset radio and custom input
+        document.querySelectorAll('input[name="contextType"]').forEach(r => r.checked = false);
+        document.getElementById('customContextInput').style.display = 'none';
+        document.getElementById('customContextName').value = '';
+    }
+    function closeSaveModal() {
+        document.getElementById('saveModal').style.display = 'none';
+    }
+    // Show/hide custom input
+    document.querySelectorAll('input[name="contextType"]').forEach(radio => {
+        radio.addEventListener('change', function() {
+            if (this.value === 'custom') {
+                document.getElementById('customContextInput').style.display = 'block';
+            } else {
+                document.getElementById('customContextInput').style.display = 'none';
+            }
+        });
+    });
+    // Confirm save
+    async function confirmSaveRecommendation() {
+        let contextType = document.querySelector('input[name="contextType"]:checked');
+        if (!contextType) {
+            alert('Please select a context type.');
+            return;
+        }
+        contextType = contextType.value;
+        let customName = '';
+        if (contextType === 'custom') {
+            customName = document.getElementById('customContextName').value.trim();
+            if (!customName) {
+                alert('Please enter a custom context name.');
+                return;
+            }
+        }
+        // Prepare payload
+        const payload = {
+            answer: lastAssistantAnswer,
+            context_type: contextType,
+            custom_context: customName
+        };
+        // Send to backend
+        try {
+            const response = await fetch('/api/save-recommendation', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            const data = await response.json();
+            if (data.success) {
+                alert('Recommendation saved successfully!');
+                closeSaveModal();
+            } else {
+                alert('Error saving recommendation: ' + (data.error || 'Unknown error'));
+            }
+        } catch (err) {
+            alert('Error saving recommendation: ' + err.message);
         }
     }
 </script>

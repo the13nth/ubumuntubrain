@@ -543,7 +543,7 @@ def upload_file():
             if db:
                 db.collection('uploaded_documents').document(doc_id).set({
                     'filename': file.filename,
-                    'text': text[:1000] + '...' if len(text) > 1000 else text,  # Store truncated text
+                    'text': text,  # Store the full text
                     'metadata': metadata,
                     'created_at': firestore.SERVER_TIMESTAMP
                 })
@@ -1973,6 +1973,17 @@ def process_and_embed_firebase_contexts():
                 'created_at': rec_data.get('created_at', firestore.SERVER_TIMESTAMP)
             }
             embed_context_in_rag(text, metadata)
+        
+        # Process uploaded documents
+        uploaded_docs = db.collection('uploaded_documents').order_by('created_at', direction=firestore.Query.DESCENDING).get()
+        for doc in uploaded_docs:
+            doc_data = doc.to_dict()
+            text = doc_data.get('text', '')
+            metadata = doc_data.get('metadata', {})
+            metadata['id'] = doc.id
+            metadata['type'] = 'document'
+            metadata['source'] = 'Firebase'
+            embed_context_in_rag(text, metadata)
             
     except Exception as e:
         print(f"Error processing and embedding Firebase contexts: {str(e)}")
@@ -2298,6 +2309,17 @@ def delete_document(doc_id):
     except Exception as e:
         print(f"Error deleting document: {str(e)}")
         return jsonify({"error": str(e)}), 500
+
+@app.route('/api/save-recommendation', methods=['POST'])
+def save_recommendation():
+    try:
+        data = request.get_json()
+        print('Received recommendation to save:', data)
+        # Here you would add logic to save to Firebase, Chroma, etc.
+        # For now, just return success
+        return jsonify({"success": True, "message": "Recommendation received."})
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
 
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=5000) 

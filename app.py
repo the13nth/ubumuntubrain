@@ -20,7 +20,7 @@ import threading
 from functools import wraps
 from flask_cors import CORS
 import firebase_admin
-from firebase_admin import credentials, firestore
+from firebase_admin import credentials, firestore, storage
 import datetime
 import sqlite3
 import traceback
@@ -31,7 +31,9 @@ load_dotenv()
 # Initialize Firebase
 try:
     cred = credentials.Certificate('firebase-key.json')
-    firebase_admin.initialize_app(cred)
+    firebase_admin.initialize_app(cred, {
+        'storageBucket': 'ubumuntu-8d53c.firebasestorage.app'
+    })
     db = firestore.client()
     print("Firebase initialized successfully")
 except Exception as e:
@@ -508,53 +510,41 @@ def upload_file():
     
     if file and allowed_file(file.filename):
         try:
-            # Process the file based on its type
-            if file.filename.endswith('.pdf'):
-                text = extract_text_from_pdf(file)
-            elif file.filename.endswith('.json'):
-                text = extract_text_from_json(file)
-            else:  # .txt file
-                text = file.read().decode('utf-8')
-            
-            # Generate embedding
-            embedding = model.encode(text).tolist()
-            
+            # Save file to Firebase Storage
+            doc_id = f"doc_{datetime.datetime.utcnow().strftime('%Y%m%d%H%M%S')}"
+            bucket = storage.bucket()
+            blob = bucket.blob(f'uploads/{doc_id}/{secure_filename(file.filename)}')
+            file.seek(0)
+            blob.upload_from_file(file)
+            download_url = blob.generate_signed_url(datetime.timedelta(hours=1))  # or use blob.public_url
+
             # Create metadata with timestamp
             metadata = {
                 "source": f"File: {file.filename}",
                 "type": "document",
                 "created_at": datetime.datetime.utcnow().isoformat(),
                 "file_type": file.filename.split('.')[-1],
-                "size": len(text),
                 "color": "#ea4335",  # Red for documents
                 "size_visual": 10
             }
-            
-            # Add to ChromaDB
-            doc_id = f"doc_{datetime.datetime.utcnow().strftime('%Y%m%d%H%M%S')}"
-            collection.add(
-                embeddings=[embedding],
-                documents=[text],
-                ids=[doc_id],
-                metadatas=[metadata]
-            )
-            
-            # Also save to Firebase for backup
+
+            # Store metadata and storage info in Firestore
             if db:
                 db.collection('uploaded_documents').document(doc_id).set({
                     'filename': file.filename,
-                    'text': text,  # Store the full text
+                    'storage_path': blob.name,
+                    'download_url': download_url,
                     'metadata': metadata,
                     'created_at': firestore.SERVER_TIMESTAMP
                 })
-            
+
             return jsonify({
                 "success": True,
                 "doc_id": doc_id,
-                "message": "File uploaded and processed successfully",
-                "metadata": metadata
+                "message": "File uploaded and stored in Firebase Storage successfully",
+                "metadata": metadata,
+                "download_url": download_url
             })
-            
         except Exception as e:
             print(f"Error processing file: {str(e)}")
             return jsonify({"success": False, "error": str(e)}), 500
@@ -1978,12 +1968,50 @@ def process_and_embed_firebase_contexts():
         uploaded_docs = db.collection('uploaded_documents').order_by('created_at', direction=firestore.Query.DESCENDING).get()
         for doc in uploaded_docs:
             doc_data = doc.to_dict()
-            text = doc_data.get('text', '')
+            storage_path = doc_data.get('storage_path')
             metadata = doc_data.get('metadata', {})
             metadata['id'] = doc.id
             metadata['type'] = 'document'
             metadata['source'] = 'Firebase'
-            embed_context_in_rag(text, metadata)
+            try:
+                if not storage_path:
+                    print(f"No storage_path for uploaded document {doc.id}")
+                    continue
+                bucket = storage.bucket()
+                blob = bucket.blob(storage_path)
+                file_bytes = blob.download_as_bytes()
+                file_type = metadata.get('file_type', '').lower()
+                text = ''
+                if file_type == 'pdf':
+                    try:
+                        import io
+                        pdf_reader = PyPDF2.PdfReader(io.BytesIO(file_bytes))
+                        text = "".join([page.extract_text() or '' for page in pdf_reader.pages])
+                    except Exception as e:
+                        print(f"Error extracting PDF text for {doc.id}: {e}")
+                        continue
+                elif file_type == 'json':
+                    try:
+                        import json
+                        text = json.loads(file_bytes.decode('utf-8'))
+                        if isinstance(text, dict):
+                            text = "\n".join(str(v) for v in text.values() if v is not None)
+                        elif isinstance(text, list):
+                            text = "\n".join(str(item) for item in text if item is not None)
+                        else:
+                            text = str(text)
+                    except Exception as e:
+                        print(f"Error extracting JSON text for {doc.id}: {e}")
+                        continue
+                else:  # txt or other
+                    try:
+                        text = file_bytes.decode('utf-8')
+                    except Exception as e:
+                        print(f"Error decoding text for {doc.id}: {e}")
+                        continue
+                embed_context_in_rag(text, metadata)
+            except Exception as e:
+                print(f"Error processing uploaded document {doc.id}: {e}")
             
     except Exception as e:
         print(f"Error processing and embedding Firebase contexts: {str(e)}")

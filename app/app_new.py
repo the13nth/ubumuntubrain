@@ -19,6 +19,7 @@ from app.core.database import init_db
 from app.core.firebase import initialize_firebase
 from app.core.chroma import initialize_chroma
 from app.core.gemini import initialize_gemini
+from app.services.document_sync_service import DocumentSyncService
 
 # Load environment variables
 load_dotenv()
@@ -42,6 +43,9 @@ initialize_firebase()
 initialize_chroma()
 initialize_gemini()
 init_db()
+
+# Sync Firebase to ChromaDB on startup
+DocumentSyncService.sync_firebase_to_chroma()
 
 def broadcast_to_websockets(message):
     """Broadcast a message to all connected WebSocket clients."""
@@ -99,17 +103,17 @@ def delete_document(doc_id):
 def upload_file():
     try:
         if 'file' not in request.files:
-            return jsonify({'error': 'No file part'}), 400
+            return jsonify({'success': False, 'error': 'No file part'}), 400
         
         file = request.files['file']
         if file.filename == '':
-            return jsonify({'error': 'No selected file'}), 400
+            return jsonify({'success': False, 'error': 'No selected file'}), 400
         
-        text = DocumentService.process_uploaded_file(file, app.config['UPLOAD_FOLDER'])
-        return jsonify({'text': text})
+        result = DocumentSyncService.embed_and_save_document(file, app.config['UPLOAD_FOLDER'])
+        return jsonify({'success': True, **result})
         
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 @app.route('/api/search', methods=['POST'])
 def search():

@@ -1,0 +1,151 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container">
+    <h1 class="mb-4">Specialized Tools</h1>
+    
+    <!-- ADHD Assistant Tool -->
+    <div class="card mb-4">
+        <div class="card-header">
+            <h2 class="card-title">ADHD Assistant</h2>
+        </div>
+        <div class="card-body">
+            <p class="card-text">A specialized tool designed to help users with ADHD by providing tailored content and recommendations.</p>
+            <div class="row">
+                <div class="col-md-6">
+                    <h5>Features:</h5>
+                    <ul>
+                        <li>Content chunking and structuring</li>
+                        <li>Focus enhancement techniques</li>
+                        <li>Personalized learning adaptations</li>
+                        <li>Motivation sustainment</li>
+                        <li>Sensory integration support</li>
+                    </ul>
+                </div>
+                <div class="col-md-6">
+                    <h5>Benefits:</h5>
+                    <ul>
+                        <li>Improved focus and attention</li>
+                        <li>Better information retention</li>
+                        <li>Reduced cognitive overload</li>
+                        <li>Enhanced learning experience</li>
+                        <li>Personalized support</li>
+                    </ul>
+                </div>
+            </div>
+            <button class="btn btn-primary mt-3" onclick="activateTool('adhd')">Activate ADHD Assistant</button>
+        </div>
+    </div>
+
+    <!-- Learning Style Adaptor -->
+    <div class="card mb-4">
+        <div class="card-header">
+            <h2 class="card-title">Learning Style Adaptor</h2>
+        </div>
+        <div class="card-body">
+            <p class="card-text">Adapts content to match individual learning preferences and styles.</p>
+            <div class="row">
+                <div class="col-md-6">
+                    <h5>Learning Styles:</h5>
+                    <ul>
+                        <li>Visual</li>
+                        <li>Auditory</li>
+                        <li>Kinesthetic</li>
+                        <li>Reading/Writing</li>
+                    </ul>
+                </div>
+                <div class="col-md-6">
+                    <h5>Adaptations:</h5>
+                    <ul>
+                        <li>Content presentation</li>
+                        <li>Interaction methods</li>
+                        <li>Practice exercises</li>
+                        <li>Feedback mechanisms</li>
+                    </ul>
+                </div>
+            </div>
+            <button class="btn btn-primary mt-3" onclick="activateTool('learning')">Activate Learning Adaptor</button>
+        </div>
+    </div>
+
+    <!-- Focus Enhancement Tool -->
+    <div class="card mb-4">
+        <div class="card-header">
+            <h2 class="card-title">Focus Enhancement</h2>
+        </div>
+        <div class="card-body">
+            <p class="card-text">Helps maintain focus and reduce distractions during learning sessions.</p>
+            <div class="row">
+                <div class="col-md-6">
+                    <h5>Features:</h5>
+                    <ul>
+                        <li>Distraction filtering</li>
+                        <li>Focus timers</li>
+                        <li>Break scheduling</li>
+                        <li>Environment optimization</li>
+                    </ul>
+                </div>
+                <div class="col-md-6">
+                    <h5>Tools:</h5>
+                    <ul>
+                        <li>Pomodoro timer</li>
+                        <li>Focus music</li>
+                        <li>Distraction blocker</li>
+                        <li>Progress tracker</li>
+                    </ul>
+                </div>
+            </div>
+            <button class="btn btn-primary mt-3" onclick="activateTool('focus')">Activate Focus Enhancement</button>
+        </div>
+    </div>
+</div>
+
+<script>
+function activateTool(toolType) {
+    // Show loading indicator
+    document.getElementById('loading-indicator').style.display = 'flex';
+    
+    // Make API call to activate the tool
+    fetch(`/api/activate-tool/${toolType}`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        }
+    })
+    .then(response => response.json())
+    .then(data => {
+        // Hide loading indicator
+        document.getElementById('loading-indicator').style.display = 'none';
+        
+        // Show success message
+        showSuccessMessage(`Successfully activated ${toolType} tool!`);
+    })
+    .catch(error => {
+        // Hide loading indicator
+        document.getElementById('loading-indicator').style.display = 'none';
+        
+        // Show error message
+        showErrorMessage('Failed to activate tool. Please try again.');
+    });
+}
+
+function showSuccessMessage(message) {
+    const container = document.getElementById('error-container');
+    const div = document.createElement('div');
+    div.className = 'error-message';
+    div.style.background = 'var(--secondary-color)';
+    div.textContent = message;
+    container.appendChild(div);
+    setTimeout(() => div.remove(), 3000);
+}
+
+function showErrorMessage(message) {
+    const container = document.getElementById('error-container');
+    const div = document.createElement('div');
+    div.className = 'error-message';
+    div.textContent = message;
+    container.appendChild(div);
+    setTimeout(() => div.remove(), 3000);
+}
+</script>
+{% endblock %} 

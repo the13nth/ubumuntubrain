@@ -5,9 +5,11 @@ import PyPDF2
 import json
 from ..core.firebase import get_firebase_db
 from ..core.chroma import get_chroma_collection
+import openpyxl
+import csv
 
 class DocumentService:
-    ALLOWED_EXTENSIONS = {'txt', 'pdf', 'json'}
+    ALLOWED_EXTENSIONS = {'txt', 'pdf', 'json', 'xlsx', 'csv'}
     
     @staticmethod
     def get_document(doc_id):
@@ -69,6 +71,34 @@ class DocumentService:
             raise Exception(f"Error extracting text from JSON: {str(e)}")
     
     @staticmethod
+    def extract_text_from_xlsx(file):
+        try:
+            wb = openpyxl.load_workbook(file)
+            text = ""
+            for sheet in wb.worksheets:
+                for row in sheet.iter_rows(values_only=True):
+                    row_text = ' '.join([str(cell) for cell in row if cell is not None])
+                    if row_text:
+                        text += row_text + '\n'
+            return text.strip()
+        except Exception as e:
+            raise Exception(f"Error extracting text from XLSX: {str(e)}")
+    
+    @staticmethod
+    def extract_text_from_csv(file):
+        try:
+            text = ""
+            with open(file, 'r', encoding='utf-8') as csvfile:
+                reader = csv.reader(csvfile)
+                for row in reader:
+                    row_text = ' '.join([str(cell) for cell in row if cell is not None])
+                    if row_text:
+                        text += row_text + '\n'
+            return text.strip()
+        except Exception as e:
+            raise Exception(f"Error extracting text from CSV: {str(e)}")
+    
+    @staticmethod
     def allowed_file(filename):
         return '.' in filename and filename.rsplit('.', 1)[1].lower() in DocumentService.ALLOWED_EXTENSIONS
     
@@ -86,6 +116,10 @@ class DocumentService:
                     text = DocumentService.extract_text_from_pdf(f)
                 elif file_ext == 'json':
                     text = DocumentService.extract_text_from_json(f)
+                elif file_ext == 'xlsx':
+                    text = DocumentService.extract_text_from_xlsx(filepath)
+                elif file_ext == 'csv':
+                    text = DocumentService.extract_text_from_csv(filepath)
                 else:  # txt files
                     text = f.read().decode('utf-8')
             

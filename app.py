@@ -24,6 +24,7 @@ from firebase_admin import credentials, firestore, storage
 import datetime
 import sqlite3
 import traceback
+import umap
 
 # Load environment variables
 load_dotenv()
@@ -333,14 +334,20 @@ Your response should be practical and directly address the user's needs."""
         
         # Look for recommendations in the response
         if "recommendations:" in text.lower():
-            rec_section = text.split("recommendations:", 1)[1].split("\n")
-            recommendations = [r.strip("- ").strip() for r in rec_section if r.strip().startswith("-")]
+            rec_section = text.lower().split("recommendations:", 1)
+            if len(rec_section) > 1:
+                rec_lines = rec_section[1].split("\n")
+                recommendations = [r.strip("- ").strip() for r in rec_lines if r.strip().startswith("-")]
         elif "next steps:" in text.lower():
-            rec_section = text.split("next steps:", 1)[1].split("\n")
-            recommendations = [r.strip("- ").strip() for r in rec_section if r.strip().startswith("-")]
+            rec_section = text.lower().split("next steps:", 1)
+            if len(rec_section) > 1:
+                rec_lines = rec_section[1].split("\n")
+                recommendations = [r.strip("- ").strip() for r in rec_lines if r.strip().startswith("-")]
         elif "suggested actions:" in text.lower():
-            rec_section = text.split("suggested actions:", 1)[1].split("\n")
-            recommendations = [r.strip("- ").strip() for r in rec_section if r.strip().startswith("-")]
+            rec_section = text.lower().split("suggested actions:", 1)
+            if len(rec_section) > 1:
+                rec_lines = rec_section[1].split("\n")
+                recommendations = [r.strip("- ").strip() for r in rec_lines if r.strip().startswith("-")]
 
         return text, recommendations
 
@@ -517,7 +524,7 @@ def upload_file():
             file.seek(0)
             blob.upload_from_file(file)
             download_url = blob.generate_signed_url(datetime.timedelta(hours=1))  # or use blob.public_url
-
+            
             # Create metadata with timestamp
             metadata = {
                 "source": f"File: {file.filename}",
@@ -527,7 +534,7 @@ def upload_file():
                 "color": "#ea4335",  # Red for documents
                 "size_visual": 10
             }
-
+            
             # Store metadata and storage info in Firestore
             if db:
                 db.collection('uploaded_documents').document(doc_id).set({
@@ -537,7 +544,7 @@ def upload_file():
                     'metadata': metadata,
                     'created_at': firestore.SERVER_TIMESTAMP
                 })
-
+            
             return jsonify({
                 "success": True,
                 "doc_id": doc_id,
@@ -631,6 +638,7 @@ def get_embeddings_visualization():
             })
         
         # Apply PCA to reduce dimensions
+        from sklearn.decomposition import PCA
         pca = PCA(n_components=n_components)
         reduced_embeddings = pca.fit_transform(embeddings)
         
@@ -2348,6 +2356,35 @@ def save_recommendation():
         return jsonify({"success": True, "message": "Recommendation received."})
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
+
+@app.route('/tools')
+def tools_page():
+    return render_template('tools.html')
+
+@app.route('/api/activate-tool/<tool_type>', methods=['POST'])
+def activate_tool(tool_type):
+    try:
+        # Here you would implement the actual tool activation logic
+        # For now, we'll just return a success message
+        response = {
+            'status': 'success',
+            'message': f'Tool {tool_type} activated successfully',
+            'tool_type': tool_type
+        }
+        
+        # Broadcast the tool activation to all connected WebSocket clients
+        broadcast_to_websockets({
+            'type': 'tool_activation',
+            'tool_type': tool_type,
+            'timestamp': datetime.datetime.now().isoformat()
+        })
+        
+        return jsonify(response)
+    except Exception as e:
+        return jsonify({
+            'status': 'error',
+            'message': f'Failed to activate tool: {str(e)}'
+        }), 500
 
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=5000) 

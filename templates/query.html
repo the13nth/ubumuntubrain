@@ -376,6 +376,42 @@
     .collapsible-content.active {
         display: block;
     }
+    .suggestion-cards {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 1.5rem;
+        margin: 2rem 0 1.5rem 0;
+        justify-content: center;
+    }
+    .suggestion-card {
+        background: var(--message-background);
+        color: var(--text-color);
+        border: 1.5px solid var(--border-color);
+        border-radius: 18px;
+        padding: 2rem 2.2rem;
+        cursor: pointer;
+        font-size: 1.15rem;
+        font-weight: 600;
+        box-shadow: 0 4px 18px 0 rgba(0,0,0,0.10), 0 1.5px 4px 0 var(--shadow-color);
+        transition: background 0.18s, color 0.18s, transform 0.18s, box-shadow 0.18s;
+        min-width: 260px;
+        max-width: 320px;
+        text-align: center;
+        margin-bottom: 0.5rem;
+        margin-top: 0.5rem;
+        margin-left: 0.2rem;
+        margin-right: 0.2rem;
+        user-select: none;
+        outline: none;
+        position: relative;
+        z-index: 1;
+    }
+    .suggestion-card:hover, .suggestion-card:focus {
+        background: var(--primary-color);
+        color: #fff;
+        transform: translateY(-4px) scale(1.04);
+        box-shadow: 0 8px 32px 0 rgba(66,133,244,0.18), 0 2px 8px 0 var(--shadow-color);
+    }
 </style>
 
 <!-- Add Marked.js for Markdown parsing -->
@@ -386,6 +422,8 @@
         <div class="message assistant-message">
             Hello! I'm your AI assistant. How can I help you today?
         </div>
+        <!-- Suggestion Cards Area (now below hello message) -->
+        <div id="suggestionCards" class="suggestion-cards"></div>
     </div>
 
     <div class="input-container">
@@ -663,5 +701,229 @@
             alert('Error saving recommendation: ' + err.message);
         }
     }
+
+    // 1. Predefined questions and their follow-ups
+    const predefinedQuestions = [
+        {
+            question: "How can I improve my productivity at work?",
+            followups: [
+                { label: "What is your current job role or main tasks?", key: "role" },
+                { label: "What is your biggest productivity challenge?", key: "challenge" }
+            ]
+        },
+        {
+            question: "What are some healthy meal suggestions for diabetes?",
+            followups: [
+                { label: "Do you have any dietary restrictions or preferences?", key: "diet" },
+                { label: "What meals are you interested in? (breakfast, lunch, dinner)", key: "mealType" }
+            ]
+        },
+        {
+            question: "How can I optimize my daily commute?",
+            followups: [
+                { label: "What is your start and end location?", key: "locations" },
+                { label: "What transport modes do you use?", key: "transport" }
+            ]
+        },
+        {
+            question: "Suggest a workout routine for beginners.",
+            followups: [
+                { label: "Do you have any health conditions or injuries?", key: "health" },
+                { label: "How many days per week can you exercise?", key: "days" }
+            ]
+        },
+        {
+            question: "How do I manage stress effectively?",
+            followups: [
+                { label: "What are your main sources of stress?", key: "sources" },
+                { label: "What have you tried so far to manage stress?", key: "tried" }
+            ]
+        }
+    ];
+
+    // 2. Render suggestion cards
+    function renderSuggestionCards() {
+        const container = document.getElementById('suggestionCards');
+        container.innerHTML = '';
+        predefinedQuestions.forEach((q, idx) => {
+            const card = document.createElement('div');
+            card.className = 'suggestion-card';
+            card.textContent = q.question;
+            card.onclick = () => startFollowupFlow(idx);
+            container.appendChild(card);
+        });
+        container.style.display = 'flex';
+    }
+    renderSuggestionCards();
+
+    // 3. Follow-up flow
+    let followupState = null;
+
+    function startFollowupFlow(questionIdx) {
+        // Hide suggestion cards
+        document.getElementById('suggestionCards').style.display = 'none';
+        followupState = {
+            questionIdx,
+            answers: {},
+            step: 0
+        };
+        showFollowupPrompt();
+    }
+
+    function showFollowupPrompt() {
+        const chatMessages = document.getElementById('chatMessages');
+        // Remove any existing followup container
+        const old = document.getElementById('followupContainer');
+        if (old) old.remove();
+
+        const { questionIdx, step } = followupState;
+        const followup = predefinedQuestions[questionIdx].followups[step];
+
+        const container = document.createElement('div');
+        container.className = 'followup-container';
+        container.id = 'followupContainer';
+
+        // Card style for followup question
+        const followupCard = document.createElement('div');
+        followupCard.className = 'suggestion-card';
+        followupCard.style.margin = '0 auto 1.2rem auto';
+        followupCard.style.maxWidth = '420px';
+        followupCard.textContent = followup.label;
+        container.appendChild(followupCard);
+
+        // Card style for input
+        const inputCard = document.createElement('div');
+        inputCard.className = 'suggestion-card';
+        inputCard.style.background = 'var(--input-background)';
+        inputCard.style.boxShadow = 'none';
+        inputCard.style.margin = '0 auto';
+        inputCard.style.maxWidth = '420px';
+        inputCard.style.display = 'flex';
+        inputCard.style.alignItems = 'center';
+        inputCard.style.gap = '1rem';
+
+        const input = document.createElement('input');
+        input.className = 'followup-input';
+        input.type = 'text';
+        input.placeholder = followup.label;
+        input.style.flex = '1';
+        inputCard.appendChild(input);
+
+        const btn = document.createElement('button');
+        btn.className = 'followup-btn';
+        btn.textContent = (step === predefinedQuestions[questionIdx].followups.length - 1) ? 'Submit' : 'Next';
+        btn.onclick = () => {
+            const val = input.value.trim();
+            if (!val) {
+                input.focus();
+                return;
+            }
+            followupState.answers[followup.key] = val;
+            if (step < predefinedQuestions[questionIdx].followups.length - 1) {
+                followupState.step++;
+                showFollowupPrompt();
+            } else {
+                // All followups answered, submit query
+                submitPredefinedQuery();
+            }
+        };
+        inputCard.appendChild(btn);
+        container.appendChild(inputCard);
+
+        chatMessages.appendChild(container);
+        container.scrollIntoView({ behavior: 'smooth' });
+        input.focus();
+    }
+
+    function submitPredefinedQuery() {
+        const { questionIdx, answers } = followupState;
+        // Compose the final query
+        let query = predefinedQuestions[questionIdx].question;
+        const followups = predefinedQuestions[questionIdx].followups;
+        let contextText = followups.map(f => `${f.label} ${answers[f.key]}`).join('. ');
+        if (contextText) {
+            query += " " + contextText;
+        }
+        // Remove followup UI
+        document.getElementById('followupContainer').remove();
+        // Show the query as user message
+        addMessage(query, 'user');
+        // Call the backend as usual
+        handleSearchWithQuery(query);
+        // Reset state
+        followupState = null;
+    }
+
+    // Helper to call handleSearch with a custom query
+    function handleSearchWithQuery(query) {
+        const searchInput = document.getElementById('searchInput');
+        // Add user message to chat
+        addMessage(query, 'user');
+        // Clear input and reset height
+        searchInput.value = '';
+        searchInput.style.height = 'auto';
+
+        (async () => {
+            try {
+                const loadingId = addLoadingMessage();
+                const [healthResponse, workResponse, commuteResponse] = await Promise.all([
+                    fetch('/api/latest-health-context'),
+                    fetch('/api/latest-work-context'),
+                    fetch('/api/latest-commute-context')
+                ]);
+                const [healthData, workData, commuteData] = await Promise.all([
+                    healthResponse.json(),
+                    workResponse.json(),
+                    commuteResponse.json()
+                ]);
+                const formData = new FormData();
+                formData.append('query', query);
+                if (healthData.health_contexts?.[0]?.id) {
+                    formData.append('health_context_id', healthData.health_contexts[0].id);
+                }
+                if (workData.work_contexts?.[0]?.id) {
+                    formData.append('work_context_id', workData.work_contexts[0].id);
+                }
+                if (commuteData.commute_contexts?.[0]?.id) {
+                    formData.append('commute_context_id', commuteData.commute_contexts[0].id);
+                }
+                const response = await fetch('/api/process-firebase-query', {
+                    method: 'POST',
+                    body: formData
+                });
+                if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+                const data = await response.json();
+                removeLoadingMessage(loadingId);
+                if (data.error) throw new Error(data.error);
+                let messageContent = data.answer;
+                if (data.matching_contexts?.length > 0) {
+                    messageContent += '<div class="matching-contexts">';
+                    messageContent += '<h4>Related Contexts:</h4>';
+                    messageContent += data.matching_contexts.map(context => `
+                        <div class="context-item">
+                            <div class="type">${context.type}</div>
+                            <div class="relevance">Relevance: ${(context.relevance * 100).toFixed(1)}%</div>
+                            <div class="text">${context.text}</div>
+                        </div>
+                    `).join('');
+                    messageContent += '</div>';
+                }
+                addMessage(messageContent, 'assistant');
+            } catch (error) {
+                console.error('Error:', error);
+                addMessage(`Error: ${error.message}`, 'assistant');
+            }
+        })();
+    }
+
+    // Hide suggestion cards if user starts typing
+    const searchInputEl = document.getElementById('searchInput');
+    searchInputEl.addEventListener('input', function() {
+        if (this.value.trim().length > 0) {
+            document.getElementById('suggestionCards').style.display = 'none';
+        } else {
+            document.getElementById('suggestionCards').style.display = 'flex';
+        }
+    });
 </script>
-{% endblock %} 
+{% endblock %}

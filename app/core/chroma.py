@@ -32,16 +32,35 @@ class ChromaClient:
             print(f"Error initializing ChromaDB: {str(e)}")
             raise e
     
-    def add_embedding(self, text, metadata, doc_id=None):
-        """Add text embedding to ChromaDB"""
+    def embedding_exists(self, doc_id):
+        """Check if an embedding with the given doc_id exists."""
         try:
-            # Generate embedding
-            embedding = self.model.encode(text).tolist()
-            
+            result = self.collection.get(ids=[doc_id])
+            exists = bool(result and result['ids'])
+            if exists:
+                print(f"[CHROMA] Embedding exists for doc_id: {doc_id}")
+            else:
+                print(f"[CHROMA] No embedding found for doc_id: {doc_id}")
+            return exists
+        except Exception as e:
+            print(f"[CHROMA] Error checking embedding existence for doc_id {doc_id}: {str(e)}")
+            return False
+
+    def add_embedding(self, text, metadata, doc_id=None):
+        """Add text embedding to ChromaDB only if it doesn't already exist."""
+        try:
             # Generate ID if not provided
             if not doc_id:
                 doc_id = f"{metadata.get('type', 'doc')}_{metadata.get('id', 'unknown')}".replace(' ', '_').lower()
             
+            # Check if embedding already exists
+            if self.embedding_exists(doc_id):
+                print(f"Embedding for {doc_id} already exists. Skipping.")
+                return False
+
+            # Generate embedding
+            embedding = self.model.encode(text).tolist()
+
             # Add to ChromaDB
             self.collection.add(
                 embeddings=[embedding],
@@ -49,6 +68,7 @@ class ChromaClient:
                 ids=[doc_id],
                 metadatas=[metadata]
             )
+            print(f"Added new embedding for {doc_id}")
             return True
             
         except Exception as e:

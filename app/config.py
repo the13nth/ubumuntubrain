@@ -8,7 +8,7 @@ class Config:
     # Flask Config
     SECRET_KEY = os.getenv('SECRET_KEY', 'dev')
     UPLOAD_FOLDER = 'uploads'
-    ALLOWED_EXTENSIONS = {'txt', 'pdf', 'json'}
+    ALLOWED_EXTENSIONS = {'txt', 'pdf', 'json', 'xlsx', 'csv'}
     
     # Firebase Config
     FIREBASE_KEY_PATH = 'firebase-key.json'

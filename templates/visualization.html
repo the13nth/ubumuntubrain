@@ -1,0 +1,83 @@
+{% extends "base.html" %}
+{% block content %}
+<style>
+#visualizationDiv {
+    width: 100%;
+    height: 900px;
+    min-height: 700px;
+    margin: 0 auto;
+    background: #000;
+    border-radius: 18px;
+    box-shadow: 0 4px 24px 0 rgba(0,0,0,0.12);
+    padding: 1.5rem 0;
+}
+</style>
+<div style="max-width:1400px;margin:0 auto;">
+    <h2 style="color:#fff;margin-bottom:1.2rem;">UMAP Embeddings Visualization</h2>
+    <div id="visualizationDiv"></div>
+</div>
+<script src="https://cdn.plot.ly/plotly-2.26.0.min.js"></script>
+<script>
+async function fetchAndRenderVisualization() {
+    const res = await fetch('/api/embeddings-visualization');
+    const data = await res.json();
+    const points = data.points || [];
+    if (!points.length) {
+        document.getElementById('visualizationDiv').innerHTML = '<div style="color:#fff;text-align:center;padding:2rem;">No data to visualize.</div>';
+        return;
+    }
+    // Get color_value range
+    const colorVals = points.map(p => p.color_value);
+    const cmin = Math.min(...colorVals);
+    const cmax = Math.max(...colorVals);
+    // Main trace: glow effect
+    const traceGlow = {
+        x: points.map(p => p.x),
+        y: points.map(p => p.y),
+        mode: 'markers',
+        type: 'scattergl',
+        marker: {
+            size: 32,
+            color: colorVals,
+            colorscale: 'Turbo',
+            cmin,
+            cmax,
+            opacity: 0.18,
+            line: { width: 0 },
+        },
+        hoverinfo: 'skip',
+        showlegend: false
+    };
+    // Main trace: sharp points
+    const traceSharp = {
+        x: points.map(p => p.x),
+        y: points.map(p => p.y),
+        mode: 'markers',
+        type: 'scattergl',
+        marker: {
+            size: 12,
+            color: colorVals,
+            colorscale: 'Turbo',
+            cmin,
+            cmax,
+            opacity: 0.85,
+            line: { width: 0 },
+        },
+        text: points.map(p => `<b>Type:</b> ${p.type}<br><b>ID:</b> ${p.id}<br><b>Preview:</b> ${p.text}`),
+        hoverinfo: 'text',
+        showlegend: false
+    };
+    const layout = {
+        paper_bgcolor: '#000',
+        plot_bgcolor: '#000',
+        xaxis: { showgrid: false, zeroline: false, showticklabels: false },
+        yaxis: { showgrid: false, zeroline: false, showticklabels: false },
+        margin: { l: 0, r: 0, b: 0, t: 0 },
+        height: 900,
+        coloraxis: { colorbar: { title: 'Value', thickness: 20, len: 0.5, outlinewidth: 0, tickcolor: '#fff', tickfont: {color:'#fff'} } }
+    };
+    Plotly.newPlot('visualizationDiv', [traceGlow, traceSharp], layout, {responsive: true, displayModeBar: false});
+}
+fetchAndRenderVisualization();
+</script>
+{% endblock %} 

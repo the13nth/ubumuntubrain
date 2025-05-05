@@ -13,7 +13,7 @@ class Config:
     
     # Upload settings
     UPLOAD_FOLDER = 'uploads'
-    ALLOWED_EXTENSIONS = {'txt', 'pdf', 'json'}
+    ALLOWED_EXTENSIONS = {'txt', 'pdf', 'json', 'xlsx', 'csv'}
     
     # ChromaDB settings
     CHROMA_SETTINGS = {

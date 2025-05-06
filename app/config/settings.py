@@ -15,12 +15,6 @@ class Config:
     UPLOAD_FOLDER = 'uploads'
     ALLOWED_EXTENSIONS = {'txt', 'pdf', 'json', 'xlsx', 'csv'}
     
-    # ChromaDB settings
-    CHROMA_SETTINGS = {
-        "persist_directory": "chroma_db",
-        "anonymized_telemetry": False
-    }
-    
     # Model settings
     SENTENCE_TRANSFORMER_MODEL = "all-MiniLM-L6-v2"
     

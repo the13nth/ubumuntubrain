@@ -2,11 +2,9 @@ import warnings
 # Filter out the specific FutureWarning from transformers
 warnings.filterwarnings('ignore', category=FutureWarning, module='transformers.utils.generic')
 
-from flask import Flask, render_template, request, jsonify
+from flask import Flask, render_template, request, jsonify, send_from_directory
 import os
 from werkzeug.utils import secure_filename
-import chromadb
-from chromadb.config import Settings
 from sentence_transformers import SentenceTransformer
 import numpy as np
 from sklearn.decomposition import PCA
@@ -19,29 +17,26 @@ import json
 import threading
 from functools import wraps
 from flask_cors import CORS
-import firebase_admin
-from firebase_admin import credentials, firestore, storage
 import datetime
 import sqlite3
 import traceback
 import umap
+from app.services.visualization_service import VisualizationService
+from app.services.pinecone_service import pinecone_service
+from app.config.settings import Config
+from app.services.firebase_service import firebase_service
+import logging
+from firebase_admin import firestore
+
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # Load environment variables
 load_dotenv()
 
-# Initialize Firebase
-try:
-    cred = credentials.Certificate('firebase-key.json')
-    firebase_admin.initialize_app(cred, {
-        'storageBucket': 'ubumuntu-8d53c.firebasestorage.app'
-    })
-    db = firestore.client()
-    print("Firebase initialized successfully")
-except Exception as e:
-    print(f"Error initializing Firebase: {str(e)}")
-    db = None
-
-app = Flask(__name__)
+app = Flask(__name__, static_folder='static')
 # Enable CORS for all routes
 CORS(app)
 sock = Sock(app)
@@ -59,29 +54,14 @@ app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 # Create uploads directory if it doesn't exist
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
+# Initialize services
+firebase_service.initialize()
+db = firebase_service.db
+storage = firebase_service.storage
+
 # Initialize the sentence transformer model
-model = SentenceTransformer('all-MiniLM-L6-v2')
-print("Sentence transformer model initialized")
-
-# Initialize ChromaDB with logging
-try:
-    print("Initializing ChromaDB...")
-    client = chromadb.Client(Settings(
-        persist_directory="chroma_db",
-        anonymized_telemetry=False
-    ))
-    print("ChromaDB client created successfully")
-
-    # Create or get the collection
-    collection = client.get_or_create_collection(
-        name="text_embeddings",
-        metadata={"hnsw:space": "cosine"}
-    )
-    print(f"Collection initialized. Current count: {len(collection.get()['ids'])}")
-
-except Exception as e:
-    print(f"Error initializing ChromaDB: {str(e)}")
-    raise e
+model = SentenceTransformer(Config.SENTENCE_TRANSFORMER_MODEL)
+logger.info("Sentence transformer model initialized")
 
 # Initialize Gemini
 genai.configure(api_key=os.getenv('GOOGLE_API_KEY'))
@@ -105,19 +85,19 @@ try:
                                       generation_config=generation_config,
                                       safety_settings=safety_settings)
 except Exception as e:
-    print(f"Failed to initialize gemini-1.5-flash: {str(e)}")
+    logger.error(f"Failed to initialize gemini-1.5-flash: {str(e)}")
     try:
         model_gemini = genai.GenerativeModel(model_name="gemini-1.0-pro",
                                          generation_config=generation_config,
                                          safety_settings=safety_settings)
     except Exception as e:
-        print(f"Failed to initialize gemini-1.0-pro: {str(e)}")
+        logger.error(f"Failed to initialize gemini-1.0-pro: {str(e)}")
         try:
             model_gemini = genai.GenerativeModel(model_name="gemini-pro",
                                              generation_config=generation_config,
                                              safety_settings=safety_settings)
         except Exception as e:
-            print(f"Failed to initialize gemini-pro: {str(e)}")
+            logger.error(f"Failed to initialize gemini-pro: {str(e)}")
             model_gemini = None  # Will use fallback responses
 
 def broadcast_to_websockets(message):
@@ -167,7 +147,7 @@ def external_query():
             
         except Exception as e:
             error_message = str(e)
-            print(f"Error processing query: {error_message}")
+            logger.error(f"Error processing query: {error_message}")
             
             # Send error notification to WebSocket clients
             broadcast_to_websockets({
@@ -184,7 +164,7 @@ def external_query():
     
     except Exception as e:
         error_message = str(e)
-        print(f"External API error: {error_message}")
+        logger.error(f"External API error: {error_message}")
         return jsonify({"error": error_message}), 500
 
 @sock.route('/ws')
@@ -205,20 +185,11 @@ def process_search_query(query, context_type=None):
     # Generate query embedding
     query_embedding = model.encode(query).tolist()
     
-    # Search in ChromaDB with context type filter if provided
+    # Search in Pinecone with context type filter if provided
     if context_type:
-        results = collection.query(
-            query_embeddings=[query_embedding],
-            n_results=5,
-            where={"type": context_type},
-            include=['embeddings', 'documents', 'metadatas', 'distances']
-        )
+        results = pinecone_service.query(query_embedding, top_k=5)
     else:
-        results = collection.query(
-            query_embeddings=[query_embedding],
-            n_results=5,
-            include=['embeddings', 'documents', 'metadatas', 'distances']
-        )
+        results = pinecone_service.query(query_embedding, top_k=5)
     
     # Make sure we have results
     if not results or 'documents' not in results or not results['documents'] or not results['documents'][0]:
@@ -273,7 +244,7 @@ def generate_context_recommendations(query, context_texts, context_type):
                     previous_recommendations = rec_data['recommendations']
                 break
         except Exception as e:
-            print(f"Error fetching previous recommendations: {str(e)}")
+            logger.error(f"Error fetching previous recommendations: {str(e)}")
 
     # Analyze query and context
     analysis_prompt = f"""You are UbumuntuBrain, an intelligent AI assistant. Analyze this query and context:
@@ -352,8 +323,8 @@ Your response should be practical and directly address the user's needs."""
         return text, recommendations
 
     except Exception as e:
-        print(f"Error in generate_context_recommendations: {str(e)}")
-        print(f"Full traceback: {traceback.format_exc()}")
+        logger.error(f"Error in generate_context_recommendations: {str(e)}")
+        logger.error(f"Full traceback: {traceback.format_exc()}")
         return f"I apologize, but I encountered an error while processing your query. Would you like to try asking in a different way?", []
 
 @app.route('/api/process-contexts', methods=['POST'])
@@ -408,7 +379,7 @@ def process_contexts():
         return jsonify(results)
         
     except Exception as e:
-        print(f"Error processing contexts: {str(e)}")
+        logger.error(f"Error processing contexts: {str(e)}")
         return jsonify({"error": str(e)}), 500
 
 # Update the existing search endpoint to use the new processing functions
@@ -425,7 +396,7 @@ def search():
         result = process_search_query(query, context_type)
         return jsonify(result)
     except Exception as e:
-        print(f"Error in search: {str(e)}")
+        logger.error(f"Error in search: {str(e)}")
         return jsonify({"error": str(e)}), 500
 
 def extract_text_from_pdf(file):
@@ -493,14 +464,9 @@ def create_embedding():
         
         # Generate embedding
         embedding = model.encode(text.strip()).tolist()
-        
-        # Add to ChromaDB
-        collection.add(
-            embeddings=[embedding],
-            documents=[text.strip()],
-            ids=[f"text_{len(collection.get()['ids'])}"],
-            metadatas=[{"source": "Manual Input"}]
-        )
+        doc_id = f"text_{datetime.datetime.utcnow().strftime('%Y%m%d%H%M%S%f')}"
+        metadata = {"source": "Manual Input"}
+        pinecone_service.upsert(doc_id, embedding, metadata)
         
         return jsonify({"success": True})
     except Exception as e:
@@ -553,7 +519,7 @@ def upload_file():
                 "download_url": download_url
             })
         except Exception as e:
-            print(f"Error processing file: {str(e)}")
+            logger.error(f"Error processing file: {str(e)}")
             return jsonify({"success": False, "error": str(e)}), 500
     
     return jsonify({"success": False, "error": "Invalid file type"}), 400
@@ -561,160 +527,24 @@ def upload_file():
 @app.route('/api/data')
 def get_data():
     try:
-        print("Fetching data from all sources...")
+        logger.info("Fetching data from all sources...")
         
-        # Get all data from ChromaDB
-        data = collection.get(include=['documents', 'metadatas', 'ids'])
+        # Pinecone does not support get all, so this endpoint should be refactored to use tracked IDs or another method.
+        # For now, return an empty list or implement your own ID tracking.
         formatted_data = []
-        
-        # Check if we have any data
-        if data and 'ids' in data and data['ids']:
-            for i in range(len(data['ids'])):
-                doc_text = data['documents'][i]
-                metadata = data['metadatas'][i]
-                
-                # Format document text (truncate if needed)
-                display_text = doc_text[:100] + '...' if len(doc_text) > 100 else doc_text
-                
-                formatted_data.append({
-                    'id': data['ids'][i],
-                    'document': display_text,
-                    'full_text': doc_text,
-                    'type': metadata.get('type', 'undefined'),
-                    'source': metadata.get('source', 'Manual Input'),
-                    'created_at': metadata.get('created_at', ''),
-                    'metadata': metadata
-                })
-        
-        print(f"Formatted {len(formatted_data)} total documents for display")
+        logger.info(f"Formatted {len(formatted_data)} total documents for display")
         return jsonify(formatted_data)
     except Exception as e:
-        print(f"Error in get_data: {str(e)}")
+        logger.error(f"Error in get_data: {str(e)}")
         traceback.print_exc()
         return jsonify([])  # Return empty array instead of error
 
 @app.route('/api/embeddings-visualization')
 def get_embeddings_visualization():
-    """Get embeddings visualization data with improved 3D visualization including processed contexts"""
-    try:
-        # Get all data from ChromaDB with embeddings included
-        data = collection.get(include=['embeddings', 'documents', 'metadatas'])
-        
-        # Only process and embed Firebase contexts if we have no data or very few documents
-        if not data or 'ids' not in data or len(data['ids']) < 5:
-            process_and_embed_firebase_contexts()
-            # Get updated data after processing
-            data = collection.get(include=['embeddings', 'documents', 'metadatas'])
-
-        # If there's no data or no embeddings, return empty visualization
-        if not data or 'embeddings' not in data or not data['embeddings']:
-            return jsonify({
-                "points": [],
-                "variance_explained": [0, 0, 0],
-                "metadata": {
-                    "total_points": 0,
-                    "categories": {},
-                    "sources": {}
-                }
-            })
-
-        # Convert embeddings to numpy array
-        embeddings = np.array(data['embeddings'])
-        
-        # Determine number of components based on data size
-        n_samples = embeddings.shape[0]
-        n_features = embeddings.shape[1]
-        n_components = min(3, n_samples - 1, n_features)
-        
-        if n_components < 1:
-            return jsonify({
-                "points": [],
-                "variance_explained": [0, 0, 0],
-                "metadata": {
-                    "total_points": 0,
-                    "categories": {},
-                    "sources": {}
-                }
-            })
-        
-        # Apply PCA to reduce dimensions
-        from sklearn.decomposition import PCA
-        pca = PCA(n_components=n_components)
-        reduced_embeddings = pca.fit_transform(embeddings)
-        
-        # Create array for 3D coordinates
-        coords_3d = np.zeros((reduced_embeddings.shape[0], 3))
-        coords_3d[:, :n_components] = reduced_embeddings
-        
-        # Normalize coordinates to [-1, 1] range for better visualization
-        for i in range(3):
-            if np.max(np.abs(coords_3d[:, i])) > 0:
-                coords_3d[:, i] = coords_3d[:, i] / np.max(np.abs(coords_3d[:, i]))
-        
-        # Prepare the visualization data with enhanced metadata
-        points = []
-        categories = {}
-        sources = {}
-        
-        for i in range(len(coords_3d)):
-            # Get metadata for this point
-            metadata = data['metadatas'][i]
-            doc_type = metadata.get('type', 'unknown')
-            source = metadata.get('source', 'unknown')
-            
-            # Update category and source counts
-            categories[doc_type] = categories.get(doc_type, 0) + 1
-            sources[source] = sources.get(source, 0) + 1
-            
-            # Create point data with enhanced information
-            point_data = {
-                'x': float(coords_3d[i, 0]),
-                'y': float(coords_3d[i, 1]),
-                'z': float(coords_3d[i, 2]),
-                'text': data['documents'][i][:200] + '...' if len(data['documents'][i]) > 200 else data['documents'][i],
-                'source': source,
-                'type': doc_type,
-                'id': metadata.get('id', f'doc_{i}'),
-                'size': get_point_size(doc_type),
-                'color': get_point_color(doc_type)
-            }
-            points.append(point_data)
-        
-        # Prepare variance explained (pad with zeros if needed)
-        variance_explained = list(pca.explained_variance_ratio_)
-        while len(variance_explained) < 3:
-            variance_explained.append(0.0)
-        
-        # Calculate additional metadata
-        metadata = {
-            "total_points": len(points),
-            "categories": categories,
-            "sources": sources,
-            "dimensions": {
-                "original": n_features,
-                "reduced": n_components,
-                "variance_explained": variance_explained
-            }
-        }
-        
-        return jsonify({
-            "points": points,
-            "variance_explained": variance_explained,
-            "metadata": metadata
-        })
-        
-    except Exception as e:
-        print(f"Error in get_embeddings_visualization: {str(e)}")
-        return jsonify({
-            "error": str(e),
-            "points": [],
-            "variance_explained": [0, 0, 0],
-            "metadata": {
-                "total_points": 0,
-                "categories": {},
-                "sources": {}
-            }
-        }), 500
+    print('[Visualization] Fetching data from Pinecone for visualization...')
+    response = VisualizationService.get_embeddings_visualization()
+    print('[Visualization] Visualization data prepared and returned.')
+    return response
 
 def get_point_color(doc_type):
     """Get color for different document types with improved visibility"""
@@ -798,7 +628,7 @@ def fetch_firebase_query():
         return render_template('firebase_query.html', query=latest_query)
     
     except Exception as e:
-        print(f"Error fetching from Firebase: {str(e)}")
+        logger.error(f"Error fetching from Firebase: {str(e)}")
         return render_template('firebase_error.html', error=str(e))
 
 @app.route('/submit-firebase-query', methods=['POST'])
@@ -825,7 +655,7 @@ def submit_firebase_query():
         return render_template('firebase_result.html', result=result, query=query_text)
     
     except Exception as e:
-        print(f"Error processing Firebase query: {str(e)}")
+        logger.error(f"Error processing Firebase query: {str(e)}")
         return jsonify({"error": str(e)}), 500
 
 @app.route('/api/latest-firebase-query', methods=['GET'])
@@ -856,7 +686,7 @@ def latest_firebase_query():
         return jsonify({'query': query_data})
     
     except Exception as e:
-        app.logger.error(f"Error fetching latest query: {str(e)}")
+        logger.error(f"Error fetching latest query: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/latest-health-context', methods=['GET'])
@@ -877,7 +707,7 @@ def latest_health_context():
         return jsonify({'context': context_data})
             
     except Exception as e:
-        app.logger.error(f"Error fetching health context: {str(e)}")
+        logger.error(f"Error fetching health context: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/latest-work-context', methods=['GET'])
@@ -898,7 +728,7 @@ def latest_work_context():
         return jsonify({'context': context_data})
             
     except Exception as e:
-        app.logger.error(f"Error fetching work context: {str(e)}")
+        logger.error(f"Error fetching work context: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/latest-commute-context', methods=['GET'])
@@ -919,7 +749,7 @@ def latest_commute_context():
         return jsonify({'context': context_data})
             
     except Exception as e:
-        app.logger.error(f"Error fetching commute context: {str(e)}")
+        logger.error(f"Error fetching commute context: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
 def generate_layout_response(doc_ref, dashboard_context, raw_response, parsed_json):
@@ -974,7 +804,7 @@ def generate_layout_response(doc_ref, dashboard_context, raw_response, parsed_js
         # Return the formatted response
         return jsonify(formatted_response)
     except Exception as e:
-        print(f"Error in generate_layout_response: {str(e)}")
+        logger.error(f"Error in generate_layout_response: {str(e)}")
         return jsonify({"error": str(e)}), 500
 
 @app.route('/api/process-firebase-query', methods=['POST'])
@@ -1043,18 +873,18 @@ def process_firebase_query_api():
                 result['query_id'] = query_id
                 
             except Exception as e:
-                print(f"Error saving to Firebase: {str(e)}")
+                logger.error(f"Error saving to Firebase: {str(e)}")
         
         return jsonify(result)
         
     except Exception as e:
-        print(f"Error processing query: {str(e)}")
+        logger.error(f"Error processing query: {str(e)}")
         return jsonify({"error": str(e)}), 500
 
 def save_response_to_firebase(query, raw_response, response_type, original_query_id=None):
     """Save raw RAG response to Firebase for future reference and analysis"""
     if db is None:
-        print("Firebase not initialized, cannot save response")
+        logger.error("Firebase not initialized, cannot save response")
         return
     
     try:
@@ -1068,15 +898,15 @@ def save_response_to_firebase(query, raw_response, response_type, original_query
             'response_type': response_type,
             'original_query_id': original_query_id,
             'timestamp': firestore.SERVER_TIMESTAMP,
-            'embeddings_count': len(collection.get()['ids']) if collection.get() and 'ids' in collection.get() else 0
+            'embeddings_count': len(pinecone_service.list_vectors()) if pinecone_service else 0
         }
         
         # Add the document to the collection
         rag_responses_ref.add(response_data)
-        print(f"Successfully saved response to rag_responses collection")
+        logger.info(f"Successfully saved response to rag_responses collection")
     
     except Exception as e:
-        print(f"Error saving response to Firebase: {str(e)}")
+        logger.error(f"Error saving response to Firebase: {str(e)}")
 
 @app.route('/api/save-recommendations', methods=['POST'])
 def save_recommendations():
@@ -1108,7 +938,7 @@ def save_recommendations():
         
         # Add the document to the collection
         doc_ref = recommendations_ref.add(recommendation_data)
-        print(f"Successfully saved recommendations to health_ai_recommendation collection with ID: {doc_ref[1].id}")
+        logger.info(f"Successfully saved recommendations to health_ai_recommendation collection with ID: {doc_ref[1].id}")
         
         return jsonify({
             "success": True,
@@ -1116,7 +946,7 @@ def save_recommendations():
             "recommendation_id": doc_ref[1].id
         })
     except Exception as e:
-        print(f"Error saving recommendations: {str(e)}")
+        logger.error(f"Error saving recommendations: {str(e)}")
         return jsonify({"error": f"Error saving recommendations: {str(e)}"}), 500
 
 def sync_local_recommendations_with_firebase():
@@ -1130,7 +960,7 @@ def sync_local_recommendations_with_firebase():
         conn.close()
 
         if not local_recommendations:
-            print("No local recommendations to sync")
+            logger.info("No local recommendations to sync")
             return
 
         # Get Firebase recommendations
@@ -1158,12 +988,13 @@ def sync_local_recommendations_with_firebase():
             }
             
             if not query:  # Document doesn't exist in Firebase
-                print(f"Adding local recommendation {rec_dict['id']} to Firebase")
+                logger.info(f"Adding local recommendation {rec_dict['id']} to Firebase")
                 doc_ref = recommendations_ref.add(recommendation_data)
-                print(f"Created new recommendation in Firebase with ID: {doc_ref[1].id}")
+                logger.info(f"Created new recommendation in Firebase with ID: {doc_ref[1].id}")
             else:
                 # Update existing document
                 for doc in query:
+                    logger.info(f"Updating existing recommendation in Firebase with ID: {doc.id}")
                     print(f"Updating existing recommendation in Firebase with ID: {doc.id}")
                     doc.reference.update(recommendation_data)
                     
@@ -1476,23 +1307,16 @@ def get_from_local_db(data_type, limit=1):
 def check_existing_embedding(metadata):
     """Check if an embedding with the same metadata already exists"""
     try:
-        # Get all documents and check metadata manually since ChromaDB where clause is limited
-        results = collection.get(include=["metadatas"])
-        if not results or 'metadatas' not in results:
-            return False
-            
-        # Check each metadata for matching id and type
-        for meta in results['metadatas']:
-            if (meta.get('id') == metadata.get('id') and 
-                meta.get('type') == metadata.get('type')):
-                return True
-        return False
+        # Get document from Pinecone
+        doc_id = f"{metadata['type']}_{metadata['id']}"
+        result = pinecone_service.fetch(doc_id)
+        return result and result['vectors'] and doc_id in result['vectors']
     except Exception as e:
         print(f"Error checking existing embedding: {str(e)}")
         return False
 
 def add_to_embeddings(text, metadata):
-    """Add text to ChromaDB embeddings if it doesn't already exist"""
+    """Add text to Pinecone embeddings if it doesn't already exist"""
     try:
         # Check if embedding already exists
         if check_existing_embedding(metadata):
@@ -1505,13 +1329,8 @@ def add_to_embeddings(text, metadata):
         # Generate a unique document ID based on metadata
         doc_id = f"{metadata.get('type', 'doc')}_{metadata.get('id', 'unknown')}".replace(' ', '_').lower()
         
-        # Add to ChromaDB
-        collection.add(
-            embeddings=[embedding],
-            documents=[text],
-            ids=[doc_id],
-            metadatas=[metadata]
-        )
+        # Add to Pinecone
+        pinecone_service.upsert(doc_id, embedding, metadata)
         print(f"Added new embedding for {metadata.get('type')} with ID {metadata.get('id')}")
         return True
     except Exception as e:
@@ -1839,47 +1658,33 @@ def get_tools():
 # Add after the init_db() function
 
 def embed_context_in_rag(text, metadata):
-    """Embed a context into the RAG system using ChromaDB"""
+    """Embed a context into the RAG system using Pinecone"""
     try:
         # Generate a unique ID based on the context type and Firebase ID
         doc_id = f"{metadata['type']}_{metadata['id']}"
         
         # Check if this exact document already exists
-        existing = collection.get(
-            ids=[doc_id],
-            include=["documents", "metadatas"]
-        )
+        existing = pinecone_service.fetch(doc_id)
         
         # If document exists and content hasn't changed, skip embedding
-        if existing and len(existing['ids']) > 0:
-            existing_text = existing['documents'][0]
-            existing_metadata = existing['metadatas'][0]
+        if existing and existing['vectors']:
+            existing_metadata = existing['vectors'][doc_id]['metadata']
             
             # Only update if the content or metadata has changed
-            if existing_text == text and existing_metadata == metadata:
+            if existing_metadata == metadata:
                 print(f"Skipping existing unchanged {metadata['type']} embedding for ID: {metadata['id']}")
                 return True
         
         # Generate embedding only if document is new or has changed
         embedding = model.encode(text).tolist()
         
-        if existing and len(existing['ids']) > 0:
+        if existing and existing['vectors']:
             # Update existing embedding
-            collection.update(
-                ids=[doc_id],
-                embeddings=[embedding],
-                documents=[text],
-                metadatas=[metadata]
-            )
+            pinecone_service.upsert(doc_id, embedding, metadata)
             print(f"Updated changed {metadata['type']} embedding for ID: {metadata['id']}")
         else:
             # Add new embedding
-            collection.add(
-                ids=[doc_id],
-                embeddings=[embedding],
-                documents=[text],
-                metadatas=[metadata]
-            )
+            pinecone_service.upsert(doc_id, embedding, metadata)
             print(f"Added new {metadata['type']} embedding for ID: {metadata['id']}")
         
         return True
@@ -2033,49 +1838,18 @@ def get_contexts():
     try:
         all_contexts = []
         seen_ids = set()  # Track seen document IDs to prevent duplicates
-        
-        # Fetch uploaded documents from ChromaDB first
-        if collection:
-            chroma_docs = collection.get()
-            for i, doc in enumerate(chroma_docs['documents']):
-                doc_id = chroma_docs['ids'][i]
-                metadata = chroma_docs['metadatas'][i]
-                
-                # Skip if we've seen this ID before
-                if doc_id in seen_ids:
-                    continue
-                seen_ids.add(doc_id)
-                
-                # Format the document display text based on source
-                source = metadata.get('source', '')
-                if source.startswith('File:'):
-                    display_text = f"Document: {source[6:]} - {doc[:100]}..."  # Show filename and preview
-                else:
-                    display_text = doc[:200] + '...' if len(doc) > 200 else doc
-                
-                all_contexts.append({
-                    'id': doc_id,
-                    'document': display_text,
-                    'type': metadata.get('type', 'document'),
-                    'source': source,
-                    'created_at': metadata.get('created_at'),
-                    'metadata': {
-                        'color': '#ea4335',  # Red for documents
-                        'size': 10,
-                        'file_type': metadata.get('file_type', ''),
-                        'size_bytes': metadata.get('size', 0)
-                    }
-                })
-        
         # Fetch from work_context collection
         work_docs = db.collection('work_context').get()
         for doc in work_docs:
-            # Skip if we've seen this ID before
             if doc.id in seen_ids:
                 continue
             seen_ids.add(doc.id)
-            
             data = doc.to_dict()
+            doc_id = f"work_context_{doc.id}"
+            pinecone_embedded = False
+            fetch_result = pinecone_service.fetch(doc_id)
+            if getattr(fetch_result, 'vectors', None) and doc_id in fetch_result.vectors:
+                pinecone_embedded = True
             all_contexts.append({
                 'id': doc.id,
                 'document': f"Work Context: Task {data.get('taskName')}, Priority {data.get('priority')}, Status {data.get('status')}",
@@ -2085,18 +1859,21 @@ def get_contexts():
                 'metadata': {
                     'color': '#4285f4',  # Blue for work
                     'size': 10
-                }
+                },
+                'is_embedded': pinecone_embedded
             })
-
         # Fetch from commute_context collection
         commute_docs = db.collection('commute_context').get()
         for doc in commute_docs:
-            # Skip if we've seen this ID before
             if doc.id in seen_ids:
                 continue
             seen_ids.add(doc.id)
-            
             data = doc.to_dict()
+            doc_id = f"commute_context_{doc.id}"
+            pinecone_embedded = False
+            fetch_result = pinecone_service.fetch(doc_id)
+            if getattr(fetch_result, 'vectors', None) and doc_id in fetch_result.vectors:
+                pinecone_embedded = True
             all_contexts.append({
                 'id': doc.id,
                 'document': f"Commute Context: From {data.get('startLocation')} to {data.get('endLocation')} via {data.get('transportMode')}",
@@ -2106,18 +1883,21 @@ def get_contexts():
                 'metadata': {
                     'color': '#fbbc05',  # Yellow for commute
                     'size': 10
-                }
+                },
+                'is_embedded': pinecone_embedded
             })
-
         # Fetch from health_context collection
         health_docs = db.collection('health_context').get()
         for doc in health_docs:
-            # Skip if we've seen this ID before
             if doc.id in seen_ids:
                 continue
             seen_ids.add(doc.id)
-            
             data = doc.to_dict()
+            doc_id = f"health_context_{doc.id}"
+            pinecone_embedded = False
+            fetch_result = pinecone_service.fetch(doc_id)
+            if getattr(fetch_result, 'vectors', None) and doc_id in fetch_result.vectors:
+                pinecone_embedded = True
             all_contexts.append({
                 'id': doc.id,
                 'document': f"Health Context: Blood Sugar {data.get('bloodSugar')}, Exercise {data.get('exerciseMinutes')}",
@@ -2127,13 +1907,107 @@ def get_contexts():
                 'metadata': {
                     'color': '#34a853',  # Green for health
                     'size': 10
-                }
+                },
+                'is_embedded': pinecone_embedded
             })
-
+        # Fetch uploaded documents from Firestore
+        uploaded_docs = db.collection('uploaded_documents').get()
+        for doc in uploaded_docs:
+            if doc.id in seen_ids:
+                continue
+            seen_ids.add(doc.id)
+            doc_data = doc.to_dict()
+            metadata = doc_data.get('metadata', {})
+            file_name = doc_data.get('filename', 'Unknown file')
+            display_text = f"File: {file_name} - {metadata.get('file_type', '')}"
+            doc_id = f"document_{doc.id}"
+            pinecone_embedded = False
+            fetch_result = pinecone_service.fetch(doc_id)
+            if getattr(fetch_result, 'vectors', None) and doc_id in fetch_result.vectors:
+                pinecone_embedded = True
+            all_contexts.append({
+                'id': doc.id,
+                'document': display_text,
+                'type': 'document',
+                'source': 'Firebase',
+                'created_at': metadata.get('created_at', doc_data.get('created_at')),
+                'metadata': {
+                    'color': '#ea4335',  # Red for documents
+                    'size': 10,
+                    'file_type': metadata.get('file_type', ''),
+                    'size_bytes': metadata.get('size', 0)
+                },
+                'is_embedded': pinecone_embedded
+            })
         return jsonify({'contexts': all_contexts})
     except Exception as e:
         print(f"Error fetching contexts: {str(e)}")
         return jsonify({'error': str(e)}), 500
+
+@app.route('/api/embed-context/<context_id>', methods=['POST'])
+def embed_context_api(context_id):
+    try:
+        # Try to find the context in Firebase
+        # Check work_context
+        doc = db.collection('work_context').document(context_id).get()
+        if doc.exists:
+            data = doc.to_dict()
+            text = f"Work Context: Task {data.get('taskName')}, Priority {data.get('priority')}, Status {data.get('status')}"
+            metadata = {
+                'id': context_id,
+                'type': 'work_context',
+                'source': 'Firebase',
+                'created_at': data.get('created_at')
+            }
+        else:
+            # Check commute_context
+            doc = db.collection('commute_context').document(context_id).get()
+            if doc.exists:
+                data = doc.to_dict()
+                text = f"Commute Context: From {data.get('startLocation')} to {data.get('endLocation')} via {data.get('transportMode')}"
+                metadata = {
+                    'id': context_id,
+                    'type': 'commute_context',
+                    'source': 'Firebase',
+                    'created_at': data.get('created_at')
+                }
+            else:
+                # Check health_context
+                doc = db.collection('health_context').document(context_id).get()
+                if doc.exists:
+                    data = doc.to_dict()
+                    text = f"Health Context: Blood Sugar {data.get('bloodSugar')}, Exercise {data.get('exerciseMinutes')}"
+                    metadata = {
+                        'id': context_id,
+                        'type': 'health_context',
+                        'source': 'Firebase',
+                        'created_at': data.get('created_at')
+                    }
+                else:
+                    # Check uploaded_documents
+                    doc = db.collection('uploaded_documents').document(context_id).get()
+                    if doc.exists:
+                        doc_data = doc.to_dict()
+                        metadata = doc_data.get('metadata', {})
+                        file_name = doc_data.get('filename', 'Unknown file')
+                        text = f"File: {file_name} - {metadata.get('file_type', '')}"
+                        metadata['id'] = context_id
+                        metadata['type'] = 'document'
+                        metadata['source'] = 'Firebase'
+                        metadata['created_at'] = metadata.get('created_at', doc_data.get('created_at'))
+                    else:
+                        return jsonify({'success': False, 'error': 'Context not found'}), 404
+        # Check if already embedded in Pinecone
+        doc_id = f"{metadata['type']}_{metadata['id']}"
+        fetch_result = pinecone_service.fetch(doc_id)
+        if getattr(fetch_result, 'vectors', None) and doc_id in fetch_result.vectors:
+            return jsonify({'success': True, 'already_embedded': True})
+        # Not embedded, so embed now
+        embedding = model.encode(text).tolist()
+        pinecone_service.upsert(doc_id, embedding, metadata)
+        return jsonify({'success': True, 'already_embedded': False})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 @app.route('/api/contexts', methods=['POST'])
 def create_context_api():
@@ -2306,19 +2180,16 @@ def delete_context(context_id):
 @app.route('/api/document/<doc_id>', methods=['GET'])
 def get_document(doc_id):
     try:
-        # Get document from ChromaDB
-        result = collection.get(
-            ids=[doc_id],
-            include=['documents', 'metadatas']
-        )
+        # Get document from Pinecone
+        result = pinecone_service.fetch(doc_id)
         
-        if not result or not result['ids']:
+        if not result or not result['vectors']:
             return jsonify({"error": "Document not found"}), 404
             
         return jsonify({
             "id": doc_id,
-            "document": result['documents'][0],
-            "metadata": result['metadatas'][0]
+            "document": result['vectors'][doc_id]['metadata'].get('text', ''),
+            "metadata": result['vectors'][doc_id]['metadata']
         })
         
     except Exception as e:
@@ -2329,16 +2200,13 @@ def get_document(doc_id):
 def delete_document(doc_id):
     try:
         # Check if document exists
-        result = collection.get(
-            ids=[doc_id],
-            include=['metadatas']
-        )
+        result = pinecone_service.fetch(doc_id)
         
-        if not result or not result['ids']:
+        if not result or not result['vectors']:
             return jsonify({"error": "Document not found"}), 404
         
-        # Delete from ChromaDB
-        collection.delete(ids=[doc_id])
+        # Delete from Pinecone
+        pinecone_service.delete(doc_id)
         
         return jsonify({"success": True})
         
@@ -2351,7 +2219,7 @@ def save_recommendation():
     try:
         data = request.get_json()
         print('Received recommendation to save:', data)
-        # Here you would add logic to save to Firebase, Chroma, etc.
+        # Here you would add logic to save to Firebase
         # For now, just return success
         return jsonify({"success": True, "message": "Recommendation received."})
     except Exception as e:

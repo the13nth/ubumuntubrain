@@ -21,10 +21,10 @@ def generate_document_id(metadata: Dict[str, Any]) -> str:
 
 def format_recommendation(result: Dict[str, Any], index: int) -> Dict[str, Any]:
     """
-    Format a single recommendation result from ChromaDB.
+    Format a single recommendation result.
     
     Args:
-        result: Result from ChromaDB query
+        result: Result from vector database query
         index: Index of result in query results
         
     Returns:
@@ -64,7 +64,7 @@ def filter_recommendations(results: Dict[str, Any], threshold: float = 0.7) -> L
     Filter recommendations by similarity threshold and format them.
     
     Args:
-        results: Results from ChromaDB query
+        results: Results from vector database query
         threshold: Minimum similarity score (1 - distance)
         
     Returns:

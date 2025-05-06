@@ -1,28 +1,69 @@
 import firebase_admin
-from firebase_admin import credentials, firestore
+from firebase_admin import credentials, firestore, storage
 from datetime import datetime
 from ..config.settings import Config
-from .chroma_service import ChromaService
+import os
+import logging
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 class FirebaseService:
     """Service for managing Firebase operations."""
     
+    _instance = None
+    _initialized = False
+    
+    def __new__(cls):
+        if cls._instance is None:
+            cls._instance = super(FirebaseService, cls).__new__(cls)
+        return cls._instance
+    
     def __init__(self):
-        self.db = None
-        self.chroma_service = ChromaService()
-        self.initialize()
+        if not self._initialized:
+            self.db = None
+            self.storage = None
+            self._initialized = True
     
     def initialize(self):
-        """Initialize Firebase client."""
+        """Initialize Firebase services."""
+        if self.db is not None:
+            return
+            
         try:
-            if not firebase_admin._apps:  # Check if not already initialized
-                cred = credentials.Certificate(Config.FIREBASE_KEY_PATH)
-                firebase_admin.initialize_app(cred)
+            logger.info("Initializing Firebase...")
+            # Check if Firebase is already initialized
+            if not firebase_admin._apps:
+                cred = credentials.Certificate('firebase-key.json')
+                firebase_admin.initialize_app(cred, {
+                    'storageBucket': 'ubumuntu-8d53c.appspot.com'
+                })
+            else:
+                # Get the default app if it's already initialized
+                app = firebase_admin.get_app()
+            
             self.db = firestore.client()
-            print("Firebase initialized successfully")
+            # Initialize storage bucket with explicit bucket name
+            self.storage = storage.bucket('ubumuntu-8d53c.appspot.com')
+            logger.info("Firebase initialized successfully")
+            
         except Exception as e:
-            print(f"Error initializing Firebase: {str(e)}")
+            logger.error(f"Error initializing Firebase: {str(e)}")
             self.db = None
+            self.storage = None
+    
+    def get_db(self):
+        """Get the Firestore database client."""
+        if not self.db:
+            self.initialize()
+        return self.db
+    
+    def get_storage(self):
+        """Get the Firebase Storage bucket."""
+        if not self.storage:
+            self.initialize()
+        return self.storage
     
     def save_query(self, query_text, query_type="user_query"):
         """Save a query to Firebase."""
@@ -144,7 +185,7 @@ class FirebaseService:
                     'source': 'Firebase',
                     'created_at': ctx_data.get('created_at', firestore.SERVER_TIMESTAMP)
                 }
-                self.chroma_service.add_document(text, metadata)
+                self.pinecone_service.upsert(metadata['id'], text, metadata)
             
             # Process health recommendations
             health_recs = self.db.collection('health_ai_recommendation').order_by('created_at', direction=firestore.Query.DESCENDING).limit(5).get()
@@ -157,7 +198,7 @@ class FirebaseService:
                     'source': 'AI Recommendation',
                     'created_at': rec_data.get('created_at', firestore.SERVER_TIMESTAMP)
                 }
-                self.chroma_service.add_document(text, metadata)
+                self.pinecone_service.upsert(metadata['id'], text, metadata)
             
             # Process work contexts
             work_contexts = self.db.collection('work_context').order_by('created_at', direction=firestore.Query.DESCENDING).limit(5).get()
@@ -170,7 +211,7 @@ class FirebaseService:
                     'source': 'Firebase',
                     'created_at': ctx_data.get('created_at', firestore.SERVER_TIMESTAMP)
                 }
-                self.chroma_service.add_document(text, metadata)
+                self.pinecone_service.upsert(metadata['id'], text, metadata)
             
             # Process work recommendations
             work_recs = self.db.collection('work_ai_recommendation').order_by('created_at', direction=firestore.Query.DESCENDING).limit(5).get()
@@ -183,7 +224,7 @@ class FirebaseService:
                     'source': 'AI Recommendation',
                     'created_at': rec_data.get('created_at', firestore.SERVER_TIMESTAMP)
                 }
-                self.chroma_service.add_document(text, metadata)
+                self.pinecone_service.upsert(metadata['id'], text, metadata)
             
             # Process commute contexts
             commute_contexts = self.db.collection('commute_context').order_by('created_at', direction=firestore.Query.DESCENDING).limit(5).get()
@@ -196,7 +237,7 @@ class FirebaseService:
                     'source': 'Firebase',
                     'created_at': ctx_data.get('created_at', firestore.SERVER_TIMESTAMP)
                 }
-                self.chroma_service.add_document(text, metadata)
+                self.pinecone_service.upsert(metadata['id'], text, metadata)
             
             # Process commute recommendations
             commute_recs = self.db.collection('commute_ai_recommendation').order_by('created_at', direction=firestore.Query.DESCENDING).limit(5).get()
@@ -209,7 +250,20 @@ class FirebaseService:
                     'source': 'AI Recommendation',
                     'created_at': rec_data.get('created_at', firestore.SERVER_TIMESTAMP)
                 }
-                self.chroma_service.add_document(text, metadata)
+                self.pinecone_service.upsert(metadata['id'], text, metadata)
                 
         except Exception as e:
             print(f"Error processing and embedding Firebase contexts: {str(e)}") 
+
+    def add_document(self, text, metadata):
+        """Add a document to both Firebase and Pinecone"""
+        try:
+            # Add to Pinecone
+            self.pinecone_service.upsert(metadata['id'], text, metadata)
+            return True
+        except Exception as e:
+            print(f"Error adding document: {str(e)}")
+            return False
+
+# Create singleton instance
+firebase_service = FirebaseService() 

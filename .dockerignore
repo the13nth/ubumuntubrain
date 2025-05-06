@@ -37,7 +37,5 @@ ENV/
 # Application specific
 uploads/*
 !uploads/.gitkeep
-chroma_db/*
-!chroma_db/.gitkeep
 .env
 *.log 

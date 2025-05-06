@@ -72,6 +72,7 @@
                             <th>Source</th>
                             <th>Created At</th>
                             <th>Actions</th>
+                            <th>Embedding</th>
                         </tr>
                     </thead>
                     <tbody id="documentTableBody"></tbody>
@@ -417,6 +418,9 @@ function updateTable(prevPageBtn, nextPageBtn, pageInfo) {
                         <i class="fas fa-trash"></i>
                     </button>
                 </div>
+            </td>
+            <td>
+                ${doc.is_embedded ? `<span class='badge bg-success'>Embedded</span>` : `<button class='btn btn-sm btn-primary' onclick='embedContext("${doc.id}", this)'>Embed</button>`}
             </td>
         </tr>
     `}).join('');
@@ -887,6 +891,26 @@ async function uploadFile(file) {
                 </div>
             </div>
         `;
+    }
+}
+
+async function embedContext(id, btn) {
+    btn.disabled = true;
+    btn.textContent = 'Embedding...';
+    try {
+        const response = await fetch(`/api/embed-context/${id}`, { method: 'POST' });
+        const result = await response.json();
+        if (result.success) {
+            btn.outerHTML = `<span class='badge bg-success'>Embedded</span>`;
+        } else {
+            btn.disabled = false;
+            btn.textContent = 'Embed';
+            showError('Failed to embed: ' + (result.error || 'Unknown error'));
+        }
+    } catch (error) {
+        btn.disabled = false;
+        btn.textContent = 'Embed';
+        showError('Failed to embed: ' + error.message);
     }
 }
 </script>

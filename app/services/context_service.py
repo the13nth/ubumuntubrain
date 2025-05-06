@@ -2,7 +2,6 @@ from flask import jsonify
 from datetime import datetime
 import firebase_admin.firestore as firestore
 from ..core.firebase import get_firebase_db
-from ..core.chroma import get_chroma_collection
 
 class ContextService:
     @staticmethod
@@ -51,54 +50,11 @@ class ContextService:
 
     @staticmethod
     def get_contexts():
-        """Get all contexts from both ChromaDB and Firebase."""
+        """Get all contexts from Firebase."""
         try:
             all_contexts = []
             seen_ids = set()
             seen_content = set()
-            
-            # Fetch uploaded documents from ChromaDB
-            collection = get_chroma_collection()
-            if collection:
-                try:
-                    chroma_docs = collection.get()
-                    if chroma_docs:
-                        for i, doc in enumerate(chroma_docs['documents']):
-                            doc_id = chroma_docs['ids'][i]
-                            metadata = chroma_docs['metadatas'][i]
-                            
-                            # Create content key for deduplication
-                            display_text = doc[:200] + '...' if len(doc) > 200 else doc
-                            content_key = ContextService.get_content_key(display_text, metadata.get('type', 'document'))
-                            
-                            # Skip if we've seen this content or ID before
-                            if doc_id in seen_ids or content_key in seen_content:
-                                continue
-                                
-                            seen_ids.add(doc_id)
-                            seen_content.add(content_key)
-                            
-                            # Format the document display text based on source
-                            source = metadata.get('source', '')
-                            if source.startswith('File:'):
-                                display_text = f"Document: {source[6:]} - {doc[:100]}..."  # Show filename and preview
-                            
-                            all_contexts.append({
-                                'id': doc_id,
-                                'document': display_text,
-                                'type': metadata.get('type', 'document'),
-                                'source': source,
-                                'created_at': metadata.get('created_at'),
-                                'metadata': {
-                                    'color': '#ea4335',  # Red for documents
-                                    'size': 10,
-                                    'file_type': metadata.get('file_type', ''),
-                                    'size_bytes': metadata.get('size', 0)
-                                }
-                            })
-                except Exception as e:
-                    print(f"Error fetching ChromaDB documents: {str(e)}")
-            
             # Fetch and process Firebase documents
             db = get_firebase_db()
             if db:
@@ -133,7 +89,6 @@ class ContextService:
             )
             
             return jsonify({'contexts': all_contexts})
-            
         except Exception as e:
             print(f"Error fetching contexts: {str(e)}")
             return jsonify({'error': str(e)}), 500

@@ -1,124 +1,141 @@
 from flask import jsonify
 import numpy as np
 from sklearn.decomposition import PCA
-from app import chroma_service
+from app.services.pinecone_service import pinecone_service
+from app.services.firebase_service import firebase_service
+import umap
+from app.config.settings import Config
 
 class VisualizationService:
     @staticmethod
     def get_embeddings_visualization():
         """Get embeddings visualization data with improved 3D visualization including processed contexts"""
         try:
-            # Use the global chroma_service instance
-            data = chroma_service.get_all_documents()
-
-            # If there's no data or no embeddings, return empty visualization
-            if not data or 'embeddings' not in data or not data['embeddings']:
+            print('[Visualization] Getting index stats from Pinecone...')
+            stats = pinecone_service.index.describe_index_stats()
+            
+            # Get total vector count from the default namespace
+            total_vectors = stats.namespaces.get('', {}).get('vector_count', 0)
+            print(f'[Visualization] Found {total_vectors} total vectors in index.')
+            
+            if total_vectors == 0:
+                print('[Visualization] No vectors found in index.')
                 return jsonify({
-                    "points": [],
-                    "variance_explained": [0, 0, 0],
-                    "metadata": {
-                        "total_points": 0,
-                        "categories": {},
-                        "sources": {}
+                    'points': [],
+                    'metadata': {
+                        'total_points': 0,
+                        'context_types': {},
+                        'recommendation_types': {},
+                        'categories': {}
                     }
                 })
 
-            # Convert embeddings to numpy array
-            embeddings = np.array(data['embeddings'])
-            
-            # Determine number of components based on data size
-            n_samples = embeddings.shape[0]
-            n_features = embeddings.shape[1]
-            n_components = min(3, n_samples - 1, n_features)
-            
-            if n_components < 1:
+            # Get all vector IDs first
+            print('[Visualization] Getting all vector IDs...')
+            vector_ids = pinecone_service.list_vectors()
+            if not vector_ids:
+                print('[Visualization] No vector IDs found.')
                 return jsonify({
-                    "points": [],
-                    "variance_explained": [0, 0, 0],
-                    "metadata": {
-                        "total_points": 0,
-                        "categories": {},
-                        "sources": {}
+                    'points': [],
+                    'metadata': {
+                        'total_points': 0,
+                        'context_types': {},
+                        'recommendation_types': {},
+                        'categories': {}
                     }
                 })
+
+            # Fetch vectors in batches
+            print(f'[Visualization] Fetching {len(vector_ids)} vectors in batches...')
+            vector_data = pinecone_service.batch_fetch(vector_ids, batch_size=10)
             
-            # Apply PCA to reduce dimensions
-            pca = PCA(n_components=n_components)
-            reduced_embeddings = pca.fit_transform(embeddings)
-            
-            # Create array for 3D coordinates
-            coords_3d = np.zeros((reduced_embeddings.shape[0], 3))
-            coords_3d[:, :n_components] = reduced_embeddings
-            
-            # Normalize coordinates to [-1, 1] range for better visualization
-            for i in range(3):
-                if np.max(np.abs(coords_3d[:, i])) > 0:
-                    coords_3d[:, i] = coords_3d[:, i] / np.max(np.abs(coords_3d[:, i]))
-            
-            # Prepare the visualization data with enhanced metadata
+            if not vector_data or not vector_data.get('vectors'):
+                print('[Visualization] No vector data could be fetched.')
+                return jsonify({
+                    'points': [],
+                    'metadata': {
+                        'total_points': 0,
+                        'context_types': {},
+                        'recommendation_types': {},
+                        'categories': {}
+                    }
+                })
+
+            # Process the fetched vectors
+            vectors, documents, metadatas, ids = [], [], [], []
+            for doc_id, v in vector_data['vectors'].items():
+                vectors.append(v['values'])
+                metadatas.append(v['metadata'])
+                documents.append(v['metadata'].get('text', ''))
+                ids.append(doc_id)
+
+            print(f'[Visualization] Total vectors processed: {len(vectors)}')
+
+            if not vectors:
+                print('[Visualization] No vectors could be processed.')
+                return jsonify({
+                    'points': [],
+                    'metadata': {
+                        'total_points': 0,
+                        'context_types': {},
+                        'recommendation_types': {},
+                        'categories': {}
+                    }
+                })
+
+            embeddings = np.array(vectors)
+            print('[Visualization] Reducing dimensions with UMAP...')
+            reducer = umap.UMAP(n_components=3, random_state=42)
+            reduced_embeddings = reducer.fit_transform(embeddings)
+
             points = []
-            categories = {}
-            sources = {}
-            
-            for i in range(len(coords_3d)):
-                # Get metadata for this point
-                metadata = data['metadatas'][i]
-                doc_type = metadata.get('type', 'unknown')
-                source = metadata.get('source', 'unknown')
-                
-                # Update category and source counts
-                categories[doc_type] = categories.get(doc_type, 0) + 1
-                sources[source] = sources.get(source, 0) + 1
-                
-                # Create point data with enhanced information
-                point_data = {
-                    'x': float(coords_3d[i, 0]),
-                    'y': float(coords_3d[i, 1]),
-                    'z': float(coords_3d[i, 2]),
-                    'text': data['documents'][i][:200] + '...' if len(data['documents'][i]) > 200 else data['documents'][i],
-                    'source': source,
+            context_types = {}
+            recommendation_types = {}
+
+            for i, (point, doc, meta) in enumerate(zip(reduced_embeddings, documents, metadatas)):
+                doc_type = meta.get('type', 'unknown')
+                color = VisualizationService.get_point_color(doc_type)
+                size = VisualizationService.get_point_size(doc_type)
+
+                # Update type counts
+                if 'recommendation' in doc_type:
+                    recommendation_types[doc_type] = recommendation_types.get(doc_type, 0) + 1
+                else:
+                    context_types[doc_type] = context_types.get(doc_type, 0) + 1
+
+                points.append({
+                    'id': ids[i],
+                    'x': float(point[0]),
+                    'y': float(point[1]),
+                    'z': float(point[2]),
+                    'text': doc[:200] + '...' if len(doc) > 200 else doc,
                     'type': doc_type,
-                    'id': metadata.get('id', f'doc_{i}'),
-                    'size': VisualizationService.get_point_size(doc_type),
-                    'color': VisualizationService.get_point_color(doc_type)
-                }
-                points.append(point_data)
-            
-            # Prepare variance explained (pad with zeros if needed)
-            variance_explained = list(pca.explained_variance_ratio_)
-            while len(variance_explained) < 3:
-                variance_explained.append(0.0)
-            
-            # Calculate additional metadata
-            metadata = {
-                "total_points": len(points),
-                "categories": categories,
-                "sources": sources,
-                "dimensions": {
-                    "original": n_features,
-                    "reduced": n_components,
-                    "variance_explained": variance_explained
-                }
-            }
-            
+                    'color': color,
+                    'size': size,
+                    'metadata': meta
+                })
+
+            print(f'[Visualization] Prepared {len(points)} points for visualization.')
             return jsonify({
-                "points": points,
-                "variance_explained": variance_explained,
-                "metadata": metadata
+                'points': points,
+                'metadata': {
+                    'total_points': len(points),
+                    'context_types': context_types,
+                    'recommendation_types': recommendation_types,
+                    'categories': context_types  # For frontend compatibility
+                }
             })
-            
         except Exception as e:
             print(f"Error in get_embeddings_visualization: {str(e)}")
             return jsonify({
-                "error": str(e),
-                "points": [],
-                "variance_explained": [0, 0, 0],
-                "metadata": {
-                    "total_points": 0,
-                    "categories": {},
-                    "sources": {}
+                'points': [],
+                'metadata': {
+                    'total_points': 0,
+                    'context_types': {},
+                    'recommendation_types': {},
+                    'categories': {}
                 }
-            }), 500
+            })
 
     @staticmethod
     def get_point_color(doc_type):

@@ -19,8 +19,7 @@ This project follows the SOLID principles for better maintainability and separat
 ├── initialize_services.py    # Service initialization manager
 ├── services/                 # Service implementations
 │   ├── __init__.py
-│   ├── chromadb_service.py   # ChromaDB database service
-│   ├── embedding_service.py  # Embedding generation service
+│   ├── pinecone_service.py   # Pinecone database service
 │   └── recommendation_service.py  # Recommendation management
 ├── models/                   # Data models
 │   ├── __init__.py
@@ -36,7 +35,7 @@ This project follows the SOLID principles for better maintainability and separat
 ### Prerequisites
 
 - Python 3.8+
-- ChromaDB
+- Pinecone
 - Sentence Transformers
 - Google Gemini API
 - Firebase (optional)
@@ -81,16 +80,15 @@ embedding_service = EmbeddingService()
 embedding = embedding_service.encode("Your text here")
 ```
 
-### ChromaDBService
+### PineconeService
 
 Manages the vector database operations.
 
 ```python
 # Example usage
-from services.chromadb_service import ChromaDBService
+from services.pinecone_service import PineconeService
 
-db_service = ChromaDBService()
-db_service.initialize()
+db_service = PineconeService()
 ```
 
 ### RecommendationService

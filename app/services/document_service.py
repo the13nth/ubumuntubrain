@@ -4,7 +4,6 @@ from werkzeug.utils import secure_filename
 import PyPDF2
 import json
 from ..core.firebase import get_firebase_db
-from ..core.chroma import get_chroma_collection
 import openpyxl
 import csv
 
@@ -33,16 +32,7 @@ class DocumentService:
             db = get_firebase_db()
             doc_ref = db.collection('documents').document(doc_id)
             doc_ref.delete()
-            
-            # Also remove from ChromaDB if needed
-            collection = get_chroma_collection()
-            try:
-                collection.delete(ids=[doc_id])
-            except:
-                pass  # Document might not exist in ChromaDB
-            
             return jsonify({'message': 'Document deleted successfully'})
-            
         except Exception as e:
             return jsonify({'error': str(e)}), 500
     

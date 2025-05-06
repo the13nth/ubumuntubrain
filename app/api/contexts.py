@@ -2,15 +2,15 @@ from flask import Blueprint, request, jsonify
 from datetime import datetime
 import firebase_admin.firestore as firestore
 
-from ..services.chroma_service import ChromaService
-from ..services.firebase_service import FirebaseService
+from ..services.pinecone_service import pinecone_service
+from ..services.firebase_service import firebase_service
 
 # Initialize services
-chroma_service = ChromaService()
-firebase_service = FirebaseService()
+pinecone_service = pinecone_service()
+firebase_service = firebase_service()
 
 # Create blueprint
-contexts = Blueprint('contexts', __name__)
+contexts_bp = Blueprint('contexts', __name__)
 
 def get_content_key(doc_text, doc_type):
     """Create a unique content key for deduplication."""
@@ -54,94 +54,53 @@ def process_firebase_doc(doc, doc_type, color, seen_ids, seen_content):
         }
     }
 
-@contexts.route('/', methods=['GET'])
+@contexts_bp.route('/contexts', methods=['GET'])
 def get_contexts():
-    """Get all contexts from both ChromaDB and Firebase."""
+    """Get all contexts from Pinecone and Firebase."""
     try:
         all_contexts = []
         seen_ids = set()
-        seen_content = set()
         
-        # Fetch uploaded documents from ChromaDB
-        if chroma_service.collection:
-            try:
-                chroma_docs = chroma_service.get_all_documents(include=['documents', 'metadatas'])
-                if chroma_docs:
-                    for i, doc in enumerate(chroma_docs['documents']):
-                        doc_id = chroma_docs['ids'][i]
-                        metadata = chroma_docs['metadatas'][i]
-                        
-                        # Create content key for deduplication
-                        display_text = doc[:200] + '...' if len(doc) > 200 else doc
-                        content_key = get_content_key(display_text, metadata.get('type', 'document'))
-                        
-                        # Skip if we've seen this content or ID before
-                        if doc_id in seen_ids or content_key in seen_content:
-                            continue
-                            
-                        seen_ids.add(doc_id)
-                        seen_content.add(content_key)
-                        
-                        # Format the document display text based on source
-                        source = metadata.get('source', '')
-                        if source.startswith('File:'):
-                            display_text = f"Document: {source[6:]} - {doc[:100]}..."  # Show filename and preview
-                        
-                        all_contexts.append({
-                            'id': doc_id,
-                            'document': display_text,
-                            'type': metadata.get('type', 'document'),
-                            'source': source,
-                            'created_at': metadata.get('created_at'),
-                            'metadata': {
-                                'color': '#ea4335',  # Red for documents
-                                'size': 10,
-                                'file_type': metadata.get('file_type', ''),
-                                'size_bytes': metadata.get('size', 0)
-                            }
-                        })
-            except Exception as e:
-                print(f"Error fetching ChromaDB documents: {str(e)}")
-        
-        # Fetch and process Firebase documents
-        if firebase_service.db:
-            try:
-                # Work contexts
-                work_docs = firebase_service.db.collection('work_context').get()
-                for doc in work_docs:
-                    context = process_firebase_doc(doc, 'work_context', '#4285f4', seen_ids, seen_content)
-                    if context:
-                        all_contexts.append(context)
-                
-                # Commute contexts
-                commute_docs = firebase_service.db.collection('commute_context').get()
-                for doc in commute_docs:
-                    context = process_firebase_doc(doc, 'commute_context', '#fbbc05', seen_ids, seen_content)
-                    if context:
-                        all_contexts.append(context)
-                
-                # Health contexts
-                health_docs = firebase_service.db.collection('health_context').get()
-                for doc in health_docs:
-                    context = process_firebase_doc(doc, 'health_context', '#34a853', seen_ids, seen_content)
-                    if context:
-                        all_contexts.append(context)
-            except Exception as e:
-                print(f"Error fetching Firebase documents: {str(e)}")
-        
-        # Sort contexts by created_at timestamp
-        all_contexts.sort(
-            key=lambda x: x.get('created_at', ''),
-            reverse=True
-        )
-        
+        # Fetch documents from Pinecone
+        pinecone_docs = pinecone_service.list_vectors()
+        for doc_id in pinecone_docs:
+            metadata = pinecone_service.get_metadata(doc_id)
+            if doc_id in seen_ids:
+                continue
+            seen_ids.add(doc_id)
+            all_contexts.append({
+                'id': doc_id,
+                'document': metadata.get('text', ''),
+                'type': metadata.get('type', 'document'),
+                'source': 'Pinecone',
+                'created_at': metadata.get('created_at'),
+                'metadata': metadata,
+                'is_embedded': True
+            })
+            
+        # Get Firebase documents
+        firebase_docs = firebase_service.get_all_documents()
+        for doc in firebase_docs:
+            if doc.id in seen_ids:
+                continue
+            seen_ids.add(doc.id)
+            data = doc.to_dict()
+            all_contexts.append({
+                'id': doc.id,
+                'document': data.get('text', ''),
+                'type': data.get('type', 'document'),
+                'source': 'Firebase',
+                'created_at': data.get('created_at'),
+                'metadata': data.get('metadata', {}),
+                'is_embedded': False
+            })
+            
         return jsonify({'contexts': all_contexts})
-        
     except Exception as e:
-        print(f"Error fetching contexts: {str(e)}")
+        print(f"Error fetching documents: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
-@contexts.route('/', methods=['POST'])
+@contexts_bp.route('/', methods=['POST'])
 def create_context():
     """Create a new context."""
     try:
@@ -246,7 +205,7 @@ def create_context():
         print(f"Error creating context: {str(e)}")
         return jsonify({'error': f'Failed to create context: {str(e)}'}), 500
 
-@contexts.route('/<context_id>', methods=['PUT'])
+@contexts_bp.route('/<context_id>', methods=['PUT'])
 def update_context(context_id):
     """Update an existing context."""
     try:
@@ -284,7 +243,7 @@ def update_context(context_id):
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-@contexts.route('/<context_id>', methods=['DELETE'])
+@contexts_bp.route('/<context_id>', methods=['DELETE'])
 def delete_context(context_id):
     """Delete a context."""
     try:

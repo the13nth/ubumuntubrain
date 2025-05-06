@@ -1,19 +1,16 @@
 from flask import jsonify
 import google.generativeai as genai
-from ..core.chroma import get_chroma_collection
 from ..core.firebase import get_firebase_db
+from ..services.pinecone_service import PineconeService
 
 class QueryService:
     @staticmethod
     def process_search_query(query, context_type=None):
         try:
-            collection = get_chroma_collection()
+            pinecone_service = PineconeService()
             
-            # Search in ChromaDB
-            results = collection.query(
-                query_texts=[query],
-                n_results=5
-            )
+            # Search in Pinecone
+            results = pinecone_service.query(query, top_k=5)
             
             # Process results and generate recommendations
             relevant_docs = []

@@ -13,12 +13,6 @@ class Config:
     # Firebase Config
     FIREBASE_KEY_PATH = 'firebase-key.json'
     
-    # ChromaDB Config
-    CHROMA_SETTINGS = {
-        "persist_directory": "chroma_db",
-        "anonymized_telemetry": False
-    }
-    
     # Gemini Config
     GENERATION_CONFIG = {
         "temperature": 0.7,

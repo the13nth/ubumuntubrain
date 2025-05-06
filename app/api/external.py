@@ -2,16 +2,11 @@ from flask import Blueprint, request, jsonify
 from functools import wraps
 import os
 
-from ..services.chroma_service import ChromaService
-from ..services.gemini_service import GeminiService
+from ..services.pinecone_service import pinecone_service
 from ..utils.websocket import ws_manager
 
-# Initialize services
-chroma_service = ChromaService()
-gemini_service = GeminiService()
-
 # Create blueprint
-external = Blueprint('external', __name__)
+external_bp = Blueprint('external', __name__)
 
 def require_api_key(f):
     """Decorator to require API key for external endpoints."""
@@ -23,7 +18,19 @@ def require_api_key(f):
         return f(*args, **kwargs)
     return decorated_function
 
-@external.route('/query', methods=['POST'])
+@external_bp.route('/search', methods=['POST'])
+def search():
+    data = request.get_json()
+    if not data or 'query' not in data:
+        return jsonify({'error': 'Query is required'}), 400
+        
+    try:
+        search_results = pinecone_service.query(data['query'])
+        return jsonify(search_results)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@external_bp.route('/query', methods=['POST'])
 @require_api_key
 def external_query():
     """External API endpoint for queries."""
@@ -35,7 +42,7 @@ def external_query():
         # Process the query using the search service
         try:
             # Search for relevant documents
-            search_results = chroma_service.search_documents(data['query'])
+            search_results = pinecone_service.query(data['query'])
             
             # Generate response using Gemini
             context = None

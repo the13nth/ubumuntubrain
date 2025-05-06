@@ -7,7 +7,6 @@ import os
 from .config import Config
 from .core.database import db
 from .core.firebase import firebase
-from .core.chroma import chroma
 
 def create_app():
     # Initialize Flask app

@@ -23,7 +23,7 @@ RUN apt-get update && apt-get install -y \
 
 # Create non-root user
 RUN useradd -m -r appuser && \
-    mkdir -p /app/uploads /app/chroma_db /app/models && \
+    mkdir -p /app/uploads /app/models && \
     chown -R appuser:appuser /app
 
 # Copy requirements first to leverage Docker cache
@@ -39,7 +39,7 @@ COPY --chown=appuser:appuser . .
 USER appuser
 
 # Create .gitkeep files for empty directories
-RUN touch uploads/.gitkeep chroma_db/.gitkeep
+RUN touch uploads/.gitkeep
 
 # Expose port
 EXPOSE $PORT

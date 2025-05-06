@@ -13,7 +13,7 @@ Content Structure (12 slides):
 - Health monitoring features
 
 2. Architecture
-- Backend: Flask, ChromaDB, Firebase, Gemini/OpenAI
+- Backend: Flask, Pinecone, Firebase, Gemini/OpenAI
 - Frontend: 3D visualization (Plotly), WebSocket updates
 - Document processing: PDF, TXT, JSON support
 - Embedding visualization with PCA reduction

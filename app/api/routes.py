@@ -3,15 +3,13 @@ from werkzeug.utils import secure_filename
 import os
 from datetime import datetime
 
-from ..services.chroma_service import ChromaService
-from ..services.firebase_service import FirebaseService
+from ..services.pinecone_service import pinecone_service
+from ..services.firebase_service import firebase_service
 from ..services.gemini_service import GeminiService
 from ..utils.file_handler import allowed_file, process_file
 from ..config.settings import Config
 
 # Initialize services
-chroma_service = ChromaService()
-firebase_service = FirebaseService()
 gemini_service = GeminiService()
 
 # Create blueprint
@@ -35,52 +33,46 @@ def contexts_page():
 
 @api.route('/contexts', methods=['GET'])
 def get_contexts():
-    """Get all contexts from both ChromaDB and Firebase."""
+    """Get all contexts from Firebase and Pinecone."""
     try:
         all_contexts = []
         seen_ids = set()
-        seen_content = set()
         
-        # Helper function to create a unique content key
-        def get_content_key(doc_text, doc_type):
-            normalized_text = ' '.join(doc_text.lower().split())
-            return f"{doc_type}:{normalized_text}"
-        
-        # Get ChromaDB documents
-        if chroma_service.collection:
-            chroma_docs = chroma_service.get_all_documents()
-            if chroma_docs:
-                for i, doc in enumerate(chroma_docs['documents']):
-                    doc_id = chroma_docs['ids'][i]
-                    metadata = chroma_docs['metadatas'][i]
-                    
-                    content_key = get_content_key(doc, metadata.get('type', 'unknown'))
-                    if doc_id not in seen_ids and content_key not in seen_content:
-                        seen_ids.add(doc_id)
-                        seen_content.add(content_key)
-                        all_contexts.append({
-                            'id': doc_id,
-                            'content': doc,
-                            **metadata
-                        })
-        
-        # Get Firebase contexts
-        firebase_contexts = firebase_service.get_context('document')
-        for ctx in firebase_contexts:
-            content_key = get_content_key(ctx.get('content', ''), ctx.get('type', 'unknown'))
-            if ctx['id'] not in seen_ids and content_key not in seen_content:
-                seen_ids.add(ctx['id'])
-                seen_content.add(content_key)
-                all_contexts.append(ctx)
-        
-        # Sort by created_at timestamp
-        all_contexts.sort(
-            key=lambda x: x.get('created_at', ''),
-            reverse=True
-        )
-        
+        # Get Pinecone documents
+        pinecone_docs = pinecone_service.list_vectors()
+        for doc_id in pinecone_docs:
+            metadata = pinecone_service.get_metadata(doc_id)
+            if doc_id in seen_ids:
+                continue
+            seen_ids.add(doc_id)
+            all_contexts.append({
+                'id': doc_id,
+                'document': metadata.get('text', ''),
+                'type': metadata.get('type', 'document'),
+                'source': metadata.get('source', 'Pinecone'),
+                'created_at': metadata.get('created_at'),
+                'metadata': metadata,
+                'is_embedded': True
+            })
+            
+        # Get Firebase documents
+        firebase_docs = firebase_service.get_all_documents()
+        for doc in firebase_docs:
+            if doc.id in seen_ids:
+                continue
+            seen_ids.add(doc.id)
+            data = doc.to_dict()
+            all_contexts.append({
+                'id': doc.id,
+                'document': data.get('text', ''),
+                'type': data.get('type', 'document'),
+                'source': 'Firebase',
+                'created_at': data.get('created_at'),
+                'metadata': data.get('metadata', {}),
+                'is_embedded': False
+            })
+            
         return jsonify({'contexts': all_contexts})
-        
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
@@ -108,14 +100,6 @@ def upload_file():
             # Process file and extract content
             content = process_file(file)
             
-            # Save to ChromaDB
-            metadata = {
-                'type': 'uploaded',
-                'filename': filename,
-                'created_at': datetime.utcnow().isoformat()
-            }
-            chroma_service.add_document(content, metadata)
-            
             # Save to Firebase
             firebase_service.save_context('document', {
                 'content': content,
@@ -140,11 +124,8 @@ def process_query():
             
         query = data['query']
         
-        # Save query to Firebase
-        firebase_service.save_query(query)
-        
         # Search for relevant documents
-        search_results = chroma_service.search_documents(query)
+        search_results = pinecone_service.search_vectors(query)
         
         # Generate response using Gemini
         context = None

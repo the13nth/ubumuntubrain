@@ -2,115 +2,101 @@
 {% from "components/visualization.html" import visualization %}
 
 {% block content %}
-    <div class="container">
-    <h1>Document Visualization & Analysis</h1>
-                
+<main class="container" aria-label="Document Visualization and Analysis">
+    <h1 tabindex="0">Document Visualization &amp; Analysis</h1>
+    
     <!-- Visualization Section -->
-    <div class="row mt-4">
-        <div class="col-12 mb-4">
-            <div class="card">
+    <section aria-labelledby="visualization-heading" class="row mt-4 mb-4">
+        <div class="col-12">
+            <div class="card" role="region" aria-labelledby="visualization-heading">
                 <div class="card-header">
-                    <h5 class="card-title mb-0">Document Visualization</h5>
-                        </div>
+                    <h2 class="card-title mb-0" id="visualization-heading" tabindex="0">Document Visualization</h2>
+                </div>
                 <div class="card-body visualization-container">
                     {{ visualization() }}
-                        </div>
                 </div>
             </div>
         </div>
-        
+    </section>
+    
     <!-- Analysis Section -->
-    <div class="row">
-        <div class="col-md-6">
-            <div class="card">
+    <section class="row" aria-label="Analysis Section">
+        <div class="col-md-6 mb-4">
+            <div class="card" role="region" aria-labelledby="statistics-heading">
                 <div class="card-header">
-                    <h5 class="card-title mb-0">Statistics</h5>
+                    <h2 class="card-title mb-0" id="statistics-heading" tabindex="0">Statistics</h2>
                 </div>
                 <div class="card-body">
-                    <p class="mb-2">Total Points: <span id="totalPoints">0</span></p>
-                    
-                    <h6 class="mt-4">By Type:</h6>
-                    <ul class="list-unstyled" id="typeStats">
-                    </ul>
-                    
-                    <h6 class="mt-4">By Source:</h6>
-                    <ul class="list-unstyled" id="sourceStats">
-                    </ul>
+                    <p class="mb-2">Total Points: <span id="totalPoints" aria-live="polite">0</span></p>
+                    <h3 class="mt-4" tabindex="0">By Type:</h3>
+                    <ul class="list-unstyled" id="typeStats" aria-live="polite"></ul>
+                    <h3 class="mt-4" tabindex="0">By Source:</h3>
+                    <ul class="list-unstyled" id="sourceStats" aria-live="polite"></ul>
+                </div>
             </div>
         </div>
-                        </div>
-        <div class="col-md-6">
-            <div class="card">
+        <div class="col-md-6 mb-4">
+            <div class="card" role="region" aria-labelledby="embedding-analysis-heading">
                 <div class="card-header">
-                    <h5 class="card-title mb-0">Embedding Analysis</h5>
-    </div>
+                    <h2 class="card-title mb-0" id="embedding-analysis-heading" tabindex="0">Embedding Analysis</h2>
+                </div>
                 <div class="card-body">
-                    <h6>Cluster Information</h6>
+                    <h3>Cluster Information</h3>
                     <ul class="list-unstyled mb-4">
-                        <li>Health cluster: <span id="healthClusterCount">0</span> points</li>
-                        <li>Work cluster: <span id="workClusterCount">0</span> points</li>
-                        <li>Commute cluster: <span id="commuteClusterCount">0</span> points</li>
+                        <li><span>Health cluster:</span> <span id="healthClusterCount" tabindex="0" aria-label="Number of points in the health cluster" title="Number of points in the health cluster">0</span> points</li>
+                        <li><span>Work cluster:</span> <span id="workClusterCount" tabindex="0" aria-label="Number of points in the work cluster" title="Number of points in the work cluster">0</span> points</li>
+                        <li><span>Commute cluster:</span> <span id="commuteClusterCount" tabindex="0" aria-label="Number of points in the commute cluster" title="Number of points in the commute cluster">0</span> points</li>
                     </ul>
-
-                    <h6>Context Relationships</h6>
+                    <h3>Context Relationships</h3>
                     <ul class="list-unstyled mb-4">
-                        <li>Context-Recommendation pairs: <span id="contextRecPairs">0</span></li>
-                        <li>Average similarity score: <span id="avgSimilarity">0</span></li>
+                        <li><span>Context-Recommendation pairs:</span> <span id="contextRecPairs" tabindex="0" aria-label="Number of context-recommendation pairs" title="Number of context-recommendation pairs">0</span></li>
+                        <li><span>Average similarity score:</span> <span id="avgSimilarity" tabindex="0" aria-label="Average similarity score" title="Average similarity score">0</span></li>
                     </ul>
-
-                    <h6>Dimensional Analysis</h6>
+                    <h3>Dimensional Analysis</h3>
                     <ul class="list-unstyled">
-                        <li>Original dimensions: <span id="originalDims">0</span></li>
-                        <li>Reduced dimensions: <span id="reducedDims">0</span></li>
-                        <li>Variance explained: <span id="varianceExplained">0%</span></li>
-                                </ul>
-                                </div>
-                            </div>
-                        </div>
-                            </div>
-                            </div>
-                
-<!-- Loading Indicator -->
-<div id="loading-indicator">
-    <div class="loader"></div>
-                            </div>
+                        <li><span>Original dimensions:</span> <span id="originalDims" tabindex="0" aria-label="Original dimensions" title="Original dimensions">0</span></li>
+                        <li><span>Reduced dimensions:</span> <span id="reducedDims" tabindex="0" aria-label="Reduced dimensions" title="Reduced dimensions">0</span></li>
+                        <li><span>Variance explained:</span> <span id="varianceExplained" tabindex="0" aria-label="Variance explained" title="Variance explained">0%</span></li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+    </section>
 
-<!-- Error Container -->
-<div id="error-container"></div>
-        
+    <!-- Loading Indicator -->
+    <div id="loading-indicator" role="status" aria-live="polite" aria-busy="true" style="display:none;">
+        <span class="loader" aria-hidden="true"></span>
+        <span class="visually-hidden">Loading, please wait...</span>
+    </div>
+
+    <!-- Error Container -->
+    <div id="error-container" role="alert" aria-live="assertive"></div>
+</main>
+
 <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
 <script>
 // Keep only the visualization and analysis related code
 function updateStatistics(metadata) {
-    // Update total points
     document.getElementById('totalPoints').textContent = metadata.total_points || 0;
-    
-    // Update type statistics
     const typeStatsList = document.getElementById('typeStats');
     typeStatsList.innerHTML = '';
     for (const [type, count] of Object.entries(metadata.categories || {})) {
-        typeStatsList.innerHTML += `<li>${type}: ${count}</li>`;
+        typeStatsList.innerHTML += `<li><span>${type}:</span> <span tabindex="0" aria-label="${type} count" title="${type} count">${count}</span></li>`;
     }
-    
-    // Update source statistics
     const sourceStatsList = document.getElementById('sourceStats');
     sourceStatsList.innerHTML = '';
     for (const [source, count] of Object.entries(metadata.sources || {})) {
-        sourceStatsList.innerHTML += `<li>${source}: ${count}</li>`;
+        sourceStatsList.innerHTML += `<li><span>${source}:</span> <span tabindex="0" aria-label="${source} count" title="${source} count">${count}</span></li>`;
     }
 }
 
 function updateEmbeddingAnalysis(metadata) {
-    // Update cluster information
     const healthCluster = (metadata.categories['health_context'] || 0) + (metadata.categories['health_recommendation'] || 0);
     const workCluster = (metadata.categories['work_context'] || 0) + (metadata.categories['work_recommendation'] || 0);
     const commuteCluster = (metadata.categories['commute_context'] || 0) + (metadata.categories['commute_recommendation'] || 0);
-    
     document.getElementById('healthClusterCount').textContent = healthCluster;
     document.getElementById('workClusterCount').textContent = workCluster;
     document.getElementById('commuteClusterCount').textContent = commuteCluster;
-    
-    // Update context relationships
     const contextCount = (metadata.categories['health_context'] || 0) + 
                         (metadata.categories['work_context'] || 0) + 
                         (metadata.categories['commute_context'] || 0);
@@ -118,16 +104,10 @@ function updateEmbeddingAnalysis(metadata) {
                      (metadata.categories['work_recommendation'] || 0) + 
                      (metadata.categories['commute_recommendation'] || 0);
     document.getElementById('contextRecPairs').textContent = Math.min(contextCount, recCount);
-    
-    // Calculate average similarity (placeholder for now)
     document.getElementById('avgSimilarity').textContent = '0.85';
-    
-    // Update dimensional analysis
     if (metadata.dimensions) {
         document.getElementById('originalDims').textContent = metadata.dimensions.original || 0;
         document.getElementById('reducedDims').textContent = metadata.dimensions.reduced || 0;
-        
-        // Calculate total variance explained
         const varianceExplained = metadata.dimensions.variance_explained || [0];
         const totalVariance = varianceExplained.reduce((a, b) => a + b, 0);
         const variancePercent = (totalVariance * 100).toFixed(1);
@@ -135,25 +115,23 @@ function updateEmbeddingAnalysis(metadata) {
     }
 }
 
-// Call loadData when the page loads
-        document.addEventListener('DOMContentLoaded', function() {
+document.addEventListener('DOMContentLoaded', function() {
     loadData();
 });
 
 async function loadData() {
     try {
+        showLoading(true);
         const response = await fetch('/api/embeddings-visualization');
-                const data = await response.json();
-                
-                if (data.error) {
+        const data = await response.json();
+        if (data.error) {
             throw new Error(data.error);
         }
-        
-        // Update statistics and embedding analysis
         updateStatistics(data.metadata);
         updateEmbeddingAnalysis(data.metadata);
-        
-            } catch (error) {
+        showLoading(false);
+    } catch (error) {
+        showLoading(false);
         console.error('Error loading data:', error);
         showError('Error loading data. Please try again.');
     }
@@ -163,7 +141,7 @@ function showLoading(show) {
     const loadingIndicator = document.getElementById('loading-indicator');
     if (show) {
         loadingIndicator.style.display = 'flex';
-                } else {
+    } else {
         loadingIndicator.style.display = 'none';
     }
 }
@@ -174,38 +152,35 @@ function showError(message) {
         <div class="alert alert-danger alert-dismissible fade show" role="alert">
             ${message}
             <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
-                </div>
-            `;
+        </div>
+    `;
     errorContainer.style.display = 'block';
 }
 </script>
 
 <style>
 .card {
-    margin-bottom: 1.5rem;
-    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    margin-bottom: 2rem;
+    border-radius: 8px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.08);
 }
-
 .card-header {
-    background-color: #f8f9fa;
-    border-bottom: 2px solid #e9ecef;
+    background: #f4f6fb;
+    border-bottom: 1px solid #e0e3e8;
 }
-
 .card-title {
     color: #2c3e50;
     font-weight: 600;
 }
-
 #typeStats li, #sourceStats li {
     margin-bottom: 0.5rem;
     padding: 0.5rem 1rem;
-    border-left: 3px solid #4285f4;
+    border-left: 3px solid #1E90FF;
     background-color: #f8f9fa;
     border-radius: 0 4px 4px 0;
     display: flex;
     justify-content: space-between;
 }
-
 .card-body ul li {
     margin-bottom: 0.5rem;
     padding: 0.5rem;
@@ -213,45 +188,64 @@ function showError(message) {
     justify-content: space-between;
     align-items: center;
 }
-
 .card-body ul li span {
     font-weight: 500;
-    color: #4285f4;
+    color: #1E90FF;
     padding: 0.2rem 0.5rem;
     background-color: #f8f9fa;
     border-radius: 4px;
 }
-
 .visualization-container {
     min-height: 400px;
     padding: 1rem;
 }
-
 #loading-indicator {
     display: none;
     position: fixed;
     top: 0;
     left: 0;
-                width: 100%;
+    width: 100%;
     height: 100%;
     background: rgba(255, 255, 255, 0.8);
     justify-content: center;
     align-items: center;
     z-index: 1000;
 }
-
 .loader {
     border: 4px solid #f3f3f3;
-    border-top: 4px solid #3498db;
+    border-top: 4px solid #1E90FF;
     border-radius: 50%;
     width: 40px;
     height: 40px;
     animation: spin 1s linear infinite;
 }
-
 @keyframes spin {
     0% { transform: rotate(0deg); }
     100% { transform: rotate(360deg); }
+}
+.visually-hidden {
+    position: absolute !important;
+    width: 1px !important;
+    height: 1px !important;
+    padding: 0 !important;
+    margin: -1px !important;
+    overflow: hidden !important;
+    clip: rect(0, 0, 0, 0) !important;
+    border: 0 !important;
+}
+button:focus, .btn:focus {
+    outline: 2px solid #005fcc;
+    outline-offset: 2px;
+}
+@media (max-width: 767px) {
+    .card-body ul li, #typeStats li, #sourceStats li {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+    .visualization-container {
+        min-height: 250px;
+        padding: 0.5rem;
+    }
 }
 </style>
 {% endblock %} 

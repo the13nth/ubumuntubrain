@@ -44,8 +44,8 @@ class FirebaseService:
                 app = firebase_admin.get_app()
             
             self.db = firestore.client()
-            # Initialize storage bucket with explicit bucket name
-            self.storage = storage.bucket('ubumuntu-8d53c.appspot.com')
+            # Initialize storage as the storage module, not a bucket instance
+            self.storage = storage
             logger.info("Firebase initialized successfully")
             
         except Exception as e:

@@ -181,7 +181,7 @@ def handle_websocket(ws):
         with ws_lock:
             ws_connections.remove(ws)
 
-def process_search_query(query, context_type=None):
+def process_search_query(query, context_type=None, detail_level='detailed'):
     print(f"[app.py] Received query: {query}")
     # Generate query embedding
     query_embedding = model.encode(query).tolist()
@@ -208,7 +208,7 @@ def process_search_query(query, context_type=None):
         # Fetch full document content from Firebase if type is 'document'
         if doc_type == 'document' and doc_id:
             try:
-                text_snippet = DocumentService.get_document(doc_id)
+                text_snippet = DocumentService.get_document(doc_id, mode=detail_level)
             except Exception as e:
                 print(f"[app.py] Error fetching document content for {doc_id}: {str(e)}")
                 text_snippet = meta.get('text', '')
@@ -397,11 +397,11 @@ def search():
         data = request.json
         query = data.get('query')
         context_type = data.get('context_type')  # Optional context type filter
-        
+        detail_level = data.get('detail_level', 'detailed')
         if not query:
             return jsonify({"error": "No query provided"}), 400
         
-        result = process_search_query(query, context_type)
+        result = process_search_query(query, context_type, detail_level)
         return jsonify(result)
     except Exception as e:
         logger.error(f"Error in search: {str(e)}")
@@ -493,12 +493,72 @@ def upload_file():
         try:
             # Save file to Firebase Storage
             doc_id = f"doc_{datetime.datetime.utcnow().strftime('%Y%m%d%H%M%S')}"
-            bucket = storage.bucket()
+            bucket = storage.bucket('ubumuntu-8d53c.firebasestorage.app')
             blob = bucket.blob(f'uploads/{doc_id}/{secure_filename(file.filename)}')
             file.seek(0)
             blob.upload_from_file(file)
             download_url = blob.generate_signed_url(datetime.timedelta(hours=1))  # or use blob.public_url
-            
+
+            # Hybrid extraction: extract summary/preview for fast access
+            file_ext = file.filename.rsplit('.', 1)[1].lower()
+            file.seek(0)
+            summary = ''
+            if file_ext == 'pdf':
+                try:
+                    import io
+                    from app.services.document_service import DocumentService
+                    summary = DocumentService.extract_text_from_pdf(io.BytesIO(file.read()))[:1000]
+                except Exception as e:
+                    summary = ''
+            elif file_ext == 'json':
+                try:
+                    import io
+                    from app.services.document_service import DocumentService
+                    summary = DocumentService.extract_text_from_json(io.BytesIO(file.read()))[:1000]
+                except Exception as e:
+                    summary = ''
+            elif file_ext == 'xlsx':
+                try:
+                    import io
+                    from app.services.document_service import DocumentService
+                    # Only extract first 10 rows for summary
+                    file.seek(0)
+                    import openpyxl
+                    wb = openpyxl.load_workbook(io.BytesIO(file.read()))
+                    text = ''
+                    for sheet in wb.worksheets:
+                        for i, row in enumerate(sheet.iter_rows(values_only=True)):
+                            if i >= 10:
+                                break
+                            row_text = ' '.join([str(cell) for cell in row if cell is not None])
+                            if row_text:
+                                text += row_text + '\n'
+                    summary = text[:1000]
+                except Exception as e:
+                    summary = ''
+            elif file_ext == 'csv':
+                try:
+                    import io
+                    import csv
+                    file.seek(0)
+                    text = ''
+                    reader = csv.reader(io.StringIO(file.read().decode('utf-8')))
+                    for i, row in enumerate(reader):
+                        if i >= 10:
+                            break
+                        row_text = ' '.join([str(cell) for cell in row if cell is not None])
+                        if row_text:
+                            text += row_text + '\n'
+                    summary = text[:1000]
+                except Exception as e:
+                    summary = ''
+            else:  # txt and others
+                try:
+                    file.seek(0)
+                    summary = file.read(1000).decode('utf-8', errors='ignore')
+                except Exception as e:
+                    summary = ''
+
             # Create metadata with timestamp
             metadata = {
                 "source": f"File: {file.filename}",
@@ -508,23 +568,25 @@ def upload_file():
                 "color": "#ea4335",  # Red for documents
                 "size_visual": 10
             }
-            
-            # Store metadata and storage info in Firestore
+
+            # Store metadata, summary, and storage info in Firestore
             if db:
                 db.collection('uploaded_documents').document(doc_id).set({
                     'filename': file.filename,
                     'storage_path': blob.name,
                     'download_url': download_url,
                     'metadata': metadata,
+                    'summary': summary,
                     'created_at': firestore.SERVER_TIMESTAMP
                 })
-            
+
             return jsonify({
                 "success": True,
                 "doc_id": doc_id,
                 "message": "File uploaded and stored in Firebase Storage successfully",
                 "metadata": metadata,
-                "download_url": download_url
+                "download_url": download_url,
+                "summary": summary
             })
         except Exception as e:
             logger.error(f"Error processing file: {str(e)}")
@@ -1778,7 +1840,7 @@ def process_and_embed_firebase_contexts():
                 if not storage_path:
                     print(f"No storage_path for uploaded document {doc.id}")
                     continue
-                bucket = storage.bucket()
+                bucket = storage.bucket('ubumuntu-8d53c.firebasestorage.app')
                 blob = bucket.blob(storage_path)
                 file_bytes = blob.download_as_bytes()
                 file_type = metadata.get('file_type', '').lower()

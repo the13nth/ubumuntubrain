@@ -11,7 +11,7 @@ class DocumentService:
     ALLOWED_EXTENSIONS = {'txt', 'pdf', 'json', 'xlsx', 'csv'}
     
     @staticmethod
-    def get_document(doc_id):
+    def get_document(doc_id, mode='detailed'):
         try:
             db = firebase_service.db
             # Try uploaded_documents first
@@ -19,8 +19,37 @@ class DocumentService:
             doc = doc_ref.get()
             if doc.exists:
                 doc_data = doc.to_dict()
-                # Try to get content from 'content', 'text', or 'filename'
-                return doc_data.get('content') or doc_data.get('text') or doc_data.get('filename', '')
+                if mode == 'quick':
+                    return doc_data.get('summary') or doc_data.get('content') or doc_data.get('text') or doc_data.get('filename', '')
+                else:
+                    # Try to get full content
+                    if doc_data.get('content'):
+                        return doc_data['content']
+                    # If not present, try to extract from storage
+                    storage_path = doc_data.get('storage_path')
+                    file_type = doc_data.get('metadata', {}).get('file_type', '').lower()
+                    if storage_path and file_type:
+                        try:
+                            bucket = firebase_service.storage.bucket('ubumuntu-8d53c.firebasestorage.app')
+                            blob = bucket.blob(storage_path)
+                            file_bytes = blob.download_as_bytes()
+                            import io
+                            if file_type == 'pdf':
+                                return DocumentService.extract_text_from_pdf(io.BytesIO(file_bytes))
+                            elif file_type == 'json':
+                                return DocumentService.extract_text_from_json(io.BytesIO(file_bytes))
+                            elif file_type == 'xlsx':
+                                import openpyxl
+                                return DocumentService.extract_text_from_xlsx(io.BytesIO(file_bytes))
+                            elif file_type == 'csv':
+                                import csv
+                                return file_bytes.decode('utf-8')
+                            else:
+                                return file_bytes.decode('utf-8', errors='ignore')
+                        except Exception as e:
+                            print(f"Error extracting full content from storage for {doc_id}: {e}")
+                    # Fallback to text or filename
+                    return doc_data.get('text') or doc_data.get('filename', '')
             # Fallback to documents collection
             doc_ref = db.collection('documents').document(doc_id)
             doc = doc_ref.get()

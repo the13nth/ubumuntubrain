@@ -33,6 +33,8 @@ class VisualizationService:
             # Get all vector IDs first
             print('[Visualization] Getting all vector IDs...')
             vector_ids = pinecone_service.list_vectors()
+            # Sort vector_ids for deterministic order
+            vector_ids = sorted(vector_ids)
             if not vector_ids:
                 print('[Visualization] No vector IDs found.')
                 return jsonify({

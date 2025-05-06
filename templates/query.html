@@ -462,11 +462,20 @@
                 rows="1"
                 onInput="this.style.height = 'auto'; this.style.height = this.scrollHeight + 'px'"
             ></textarea>
-            <button onclick="handleSearch()" class="send-button">
-                <i class="fas fa-paper-plane"></i>
-                Send
-            </button>
-            
+            <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 0.5rem;">
+                <div style="display: flex; gap: 0.5rem; align-items: center;">
+                    <label style="color: var(--text-color); font-size: 0.95rem;">
+                        <input type="radio" name="detailLevel" value="quick" style="margin-right: 0.3em;"> Quick
+                    </label>
+                    <label style="color: var(--text-color); font-size: 0.95rem;">
+                        <input type="radio" name="detailLevel" value="detailed" checked style="margin-right: 0.3em;"> In Details
+                    </label>
+                </div>
+                <button onclick="handleSearch()" class="send-button">
+                    <i class="fas fa-paper-plane"></i>
+                    Send
+                </button>
+            </div>
         </div>
     </div>
 </div>
@@ -511,6 +520,9 @@
         const searchInput = document.getElementById('searchInput');
         const query = searchInput.value.trim();
         if (!query) return;
+
+        // Get detail level
+        const detailLevel = document.querySelector('input[name="detailLevel"]:checked').value;
 
         // Clear input and reset height
         searchInput.value = '';

@@ -64,9 +64,14 @@ class VisualizationService:
             # Process the fetched vectors
             vectors, documents, metadatas, ids = [], [], [], []
             for doc_id, v in vector_data['vectors'].items():
-                vectors.append(v['values'])
-                metadatas.append(v['metadata'])
-                documents.append(v['metadata'].get('text', ''))
+                values = getattr(v, 'values', None)
+                if not values or not isinstance(values, list) or len(values) != 384:
+                    print(f"[Visualization] Skipping doc_id={doc_id} due to invalid or missing embedding values.")
+                    continue
+                vectors.append(values)
+                metadata = getattr(v, 'metadata', {})
+                metadatas.append(metadata)
+                documents.append(metadata.get('text', ''))
                 ids.append(doc_id)
 
             print(f'[Visualization] Total vectors processed: {len(vectors)}')

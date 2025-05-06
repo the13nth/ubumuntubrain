@@ -27,6 +27,7 @@ from app.config.settings import Config
 from app.services.firebase_service import firebase_service
 import logging
 from firebase_admin import firestore
+from app.services.document_service import DocumentService
 
 
 # Configure logging
@@ -181,47 +182,54 @@ def handle_websocket(ws):
             ws_connections.remove(ws)
 
 def process_search_query(query, context_type=None):
-    """Process a search query and return the results."""
+    print(f"[app.py] Received query: {query}")
     # Generate query embedding
     query_embedding = model.encode(query).tolist()
-    
+    print(f"[app.py] Query embedding (first 5 values): {query_embedding[:5]}")
     # Search in Pinecone with context type filter if provided
     if context_type:
         results = pinecone_service.query(query_embedding, top_k=5)
     else:
         results = pinecone_service.query(query_embedding, top_k=5)
-    
-    # Make sure we have results
-    if not results or 'documents' not in results or not results['documents'] or not results['documents'][0]:
+    print(f"[app.py] Pinecone query results: {results}")
+    matches = results.get('matches', [])
+    if not matches:
+        print(f"[app.py] No results found for query: {query}")
         return {
             "answer": f"No {context_type if context_type else ''} documents found in the database.",
             "recommendations": []
         }
-    
-    # Process matching contexts with relevance scores
-    matching_contexts = []
-    for i in range(len(results['documents'][0])):
-        similarity = 1 - min(results['distances'][0][i], 1.0)
-        context_type = results['metadatas'][0][i].get('type', 'unknown')
-        
-        matching_contexts.append({
-            'type': context_type,
-            'text': results['documents'][0][i],
-            'relevance': similarity,
-            'metadata': results['metadatas'][0][i]
+    relevant_docs = []
+    for idx, match in enumerate(matches):
+        meta = match.get('metadata', {})
+        doc_type = meta.get('type', '')
+        doc_id = meta.get('id', '')
+        text_snippet = ''
+        # Fetch full document content from Firebase if type is 'document'
+        if doc_type == 'document' and doc_id:
+            try:
+                text_snippet = DocumentService.get_document(doc_id)
+            except Exception as e:
+                print(f"[app.py] Error fetching document content for {doc_id}: {str(e)}")
+                text_snippet = meta.get('text', '')
+        else:
+            text_snippet = meta.get('text', '')
+        print(f"[app.py] Result idx={idx}, type={doc_type}, similarity={match.get('score')}, text_snippet={text_snippet[:100]}")
+        relevant_docs.append({
+            'text': text_snippet,
+            'metadata': meta,
+            'relevance': match.get('score', 0),
+            'distance': 1 - match.get('score', 0)
         })
-    
-    # Sort contexts by relevance
-    matching_contexts.sort(key=lambda x: x['relevance'], reverse=True)
-    
-    # Generate answer and recommendations using Gemini
-    context_texts = [ctx['text'] for ctx in matching_contexts]
+    print(f"[app.py] Total matching contexts: {len(relevant_docs)}")
+    relevant_docs.sort(key=lambda x: x['relevance'], reverse=True)
+    # Use only the text for context_texts
+    context_texts = [doc['text'] for doc in relevant_docs]
     answer, recommendations = generate_context_recommendations(query, context_texts, context_type)
-    
+    print(f"[app.py] Recommendations generated: {len(recommendations)}")
     return {
-        "answer": answer,
-        "recommendations": recommendations,
-        "matching_contexts": matching_contexts
+        'answer': answer,
+        'recommendations': recommendations
     }
 
 def generate_context_recommendations(query, context_texts, context_type):
@@ -1660,33 +1668,13 @@ def get_tools():
 def embed_context_in_rag(text, metadata):
     """Embed a context into the RAG system using Pinecone"""
     try:
-        # Generate a unique ID based on the context type and Firebase ID
+        metadata = dict(metadata)
+        metadata['text'] = text
         doc_id = f"{metadata['type']}_{metadata['id']}"
-        
-        # Check if this exact document already exists
-        existing = pinecone_service.fetch(doc_id)
-        
-        # If document exists and content hasn't changed, skip embedding
-        if existing and existing['vectors']:
-            existing_metadata = existing['vectors'][doc_id]['metadata']
-            
-            # Only update if the content or metadata has changed
-            if existing_metadata == metadata:
-                print(f"Skipping existing unchanged {metadata['type']} embedding for ID: {metadata['id']}")
-                return True
-        
-        # Generate embedding only if document is new or has changed
         embedding = model.encode(text).tolist()
-        
-        if existing and existing['vectors']:
-            # Update existing embedding
-            pinecone_service.upsert(doc_id, embedding, metadata)
-            print(f"Updated changed {metadata['type']} embedding for ID: {metadata['id']}")
-        else:
-            # Add new embedding
-            pinecone_service.upsert(doc_id, embedding, metadata)
-            print(f"Added new {metadata['type']} embedding for ID: {metadata['id']}")
-        
+        print(f"[DEBUG] Upserting to Pinecone: doc_id={doc_id}, metadata={metadata}")
+        pinecone_service.upsert(doc_id, embedding, metadata)
+        print(f"[DEBUG] Added/updated embedding for {doc_id}")
         return True
     except Exception as e:
         print(f"Error embedding context in RAG: {str(e)}")
@@ -2253,6 +2241,18 @@ def activate_tool(tool_type):
             'status': 'error',
             'message': f'Failed to activate tool: {str(e)}'
         }), 500
+
+@app.route('/api/delete-embedding/<string:type>/<string:doc_id>', methods=['DELETE'])
+def delete_embedding(type, doc_id):
+    try:
+        # Compose the Pinecone vector id as used in upserts
+        pinecone_id = f"{type}_{doc_id}"
+        pinecone_service.delete(pinecone_id)
+        print(f"Deleted embedding from Pinecone: {pinecone_id}")
+        return jsonify({'success': True})
+    except Exception as e:
+        print(f"Error deleting embedding: {str(e)}")
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=5000) 

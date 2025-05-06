@@ -417,6 +417,9 @@ function updateTable(prevPageBtn, nextPageBtn, pageInfo) {
                     <button class="btn btn-sm btn-outline-danger" onclick="deleteDocument('${doc.id}')" title="Delete">
                         <i class="fas fa-trash"></i>
                     </button>
+                    <button class="btn btn-sm btn-outline-warning" onclick="deleteEmbedding('${doc.id}', '${doc.type}', this)" title="Delete Embedding">
+                        <i class="fas fa-eraser"></i>
+                    </button>
                 </div>
             </td>
             <td>
@@ -911,6 +914,29 @@ async function embedContext(id, btn) {
         btn.disabled = false;
         btn.textContent = 'Embed';
         showError('Failed to embed: ' + error.message);
+    }
+}
+
+async function deleteEmbedding(id, type, btn) {
+    if (!confirm('Are you sure you want to delete this embedding from Pinecone?')) return;
+    btn.disabled = true;
+    btn.textContent = 'Deleting...';
+    try {
+        const response = await fetch(`/api/delete-embedding/${type}/${id}`, { method: 'DELETE' });
+        const result = await response.json();
+        if (result.success) {
+            btn.outerHTML = `<span class='badge bg-secondary'>Deleted</span>`;
+            showSuccess('Embedding deleted successfully');
+            await loadDocuments();
+        } else {
+            btn.disabled = false;
+            btn.textContent = 'Delete Embedding';
+            showError('Failed to delete embedding: ' + (result.error || 'Unknown error'));
+        }
+    } catch (error) {
+        btn.disabled = false;
+        btn.textContent = 'Delete Embedding';
+        showError('Failed to delete embedding: ' + error.message);
     }
 }
 </script>

@@ -3,7 +3,7 @@ from flask import jsonify
 from werkzeug.utils import secure_filename
 import PyPDF2
 import json
-from ..core.firebase import get_firebase_db
+from app.services.firebase_service import firebase_service
 import openpyxl
 import csv
 
@@ -13,23 +13,29 @@ class DocumentService:
     @staticmethod
     def get_document(doc_id):
         try:
-            db = get_firebase_db()
+            db = firebase_service.db
+            # Try uploaded_documents first
+            doc_ref = db.collection('uploaded_documents').document(doc_id)
+            doc = doc_ref.get()
+            if doc.exists:
+                doc_data = doc.to_dict()
+                # Try to get content from 'content', 'text', or 'filename'
+                return doc_data.get('content') or doc_data.get('text') or doc_data.get('filename', '')
+            # Fallback to documents collection
             doc_ref = db.collection('documents').document(doc_id)
             doc = doc_ref.get()
-            
-            if not doc.exists:
-                return jsonify({'error': 'Document not found'}), 404
-            
-            doc_data = doc.to_dict()
-            return jsonify(doc_data)
-            
+            if doc.exists:
+                doc_data = doc.to_dict()
+                return doc_data.get('content') or doc_data.get('text') or doc_data.get('filename', '')
+            return ''
         except Exception as e:
-            return jsonify({'error': str(e)}), 500
+            print(f"Error in get_document: {str(e)}")
+            return ''
     
     @staticmethod
     def delete_document(doc_id):
         try:
-            db = get_firebase_db()
+            db = firebase_service.db
             doc_ref = db.collection('documents').document(doc_id)
             doc_ref.delete()
             return jsonify({'message': 'Document deleted successfully'})

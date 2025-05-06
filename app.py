@@ -237,6 +237,8 @@ def generate_context_recommendations(query, context_texts, context_type):
     
     # Get previous recommendations from Firebase
     previous_recommendations = []
+    prev_recs = None  # Initialize prev_recs outside the try block
+    
     if db is not None:
         try:
             if context_type == 'health':
@@ -246,11 +248,12 @@ def generate_context_recommendations(query, context_texts, context_type):
             elif context_type == 'commute':
                 prev_recs = db.collection('commute_ai_recommendation').order_by('created_at', direction=firestore.Query.DESCENDING).limit(1).get()
             
-            for doc in prev_recs:
-                rec_data = doc.to_dict()
-                if 'recommendations' in rec_data:
-                    previous_recommendations = rec_data['recommendations']
-                break
+            if prev_recs:  # Check if prev_recs exists before iterating
+                for doc in prev_recs:
+                    rec_data = doc.to_dict()
+                    if 'recommendations' in rec_data:
+                        previous_recommendations = rec_data['recommendations']
+                    break
         except Exception as e:
             logger.error(f"Error fetching previous recommendations: {str(e)}")
 
@@ -275,9 +278,13 @@ Provide your analysis in a clear, structured way that will help generate a respo
 
     try:
         # Get query analysis
-        analysis = model_gemini.generate_content(analysis_prompt)
-        if not analysis.text:
-            return "I apologize, but I couldn't analyze your query. Would you like to try rephrasing it?", []
+        try:
+            analysis = model_gemini.generate_content(analysis_prompt)
+            if not analysis.text:
+                return "I apologize, but I couldn't analyze your query. Would you like to try rephrasing it?", []
+        except Exception as e:
+            logger.error(f"Error in Gemini analysis: {str(e)}")
+            return "I apologize, but I encountered an error while analyzing your query. Would you like to try again?", []
 
         # Build response prompt using the analysis
         response_prompt = f"""You are UbumuntuBrain, a helpful AI assistant. Generate a response based on this context:
@@ -303,9 +310,13 @@ Provide a friendly, helpful response that:
 Your response should be practical and directly address the user's needs."""
 
         # Generate the final response
-        response = model_gemini.generate_content(response_prompt)
-        if not response.text:
-            return "I apologize, but I couldn't generate a response. Would you like to try asking in a different way?", []
+        try:
+            response = model_gemini.generate_content(response_prompt)
+            if not response.text:
+                return "I apologize, but I couldn't generate a response. Would you like to try asking in a different way?", []
+        except Exception as e:
+            logger.error(f"Error in Gemini response generation: {str(e)}")
+            return "I apologize, but I encountered an error while generating a response. Would you like to try again?", []
 
         # Extract recommendations from the response
         text = response.text
